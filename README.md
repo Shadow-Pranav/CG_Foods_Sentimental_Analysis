@@ -93,9 +93,8 @@ gold sample before trusting the decision rule.
    above -- they don't care whether `raw_comments.csv` came from
    `collect.py` or `generate_sample_data.py`.
 5. Before trusting `classify.py`'s transformer-vs-baseline decision rule on
-   real data, hand-label a 50-100 record gold sample yourself (there's no
-   `gold_sentiment` column on real rows) and wire it into the comparison --
-   see the docstring at the top of `pipeline/classify.py`.
+   real data, hand-label a real gold sample -- see "Human gold-label
+   evaluation" below.
 
 If `pipeline/classify.py` is run somewhere without internet access to
 download the transformer model weights (~1.1GB, cached after the first
@@ -127,6 +126,37 @@ done
 ```
 (`-C -` resumes an interrupted download rather than restarting it -- useful
 for the ~1.1GB weights file on a slow or flaky connection.)
+
+## Human gold-label evaluation
+
+`classify.py`'s built-in comparison uses `gold_sentiment`, a
+template-derived proxy (see above) -- fine for demonstrating the pipeline
+mechanics, not a substitute for real human judgment. For an actual
+METHODOLOGY.md-compliant evaluation:
+
+```bash
+python pipeline/label_gold.py           # interactive: draws a 75-comment sample
+                                         # stratified by platform + month, then
+                                         # walks you through labeling it
+                                         # (p/n/u per comment, saves after every
+                                         # answer, resumable, Ctrl+C-safe)
+python pipeline/label_gold.py --status  # check progress without labeling
+python pipeline/evaluate.py             # scores VADER, the transformer, and
+                                         # today's published final_label
+                                         # against whatever's labeled so far,
+                                         # with a confusion matrix for each,
+                                         # written into
+                                         # data/classification_report.json
+                                         # under "human_gold_evaluation"
+```
+
+The sample is written to `data/gold_labels.csv` (tracked in git -- it's
+real hand-labeling effort worth keeping, unlike the regenerable
+`sentiment.db`/`raw_comments.csv`) rather than a DB column, because
+`clean.py` drops and recreates the `comments` table on every pipeline run
+and would otherwise silently wipe hand-labeled data. `evaluate.py` re-joins
+it against the DB by comment `id` every time it runs, so it always reflects
+the current pipeline output.
 
 ## API
 
