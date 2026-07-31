@@ -257,6 +257,12 @@ h1, h2, h3 {
 .kpi-negative .kpi-value { color: var(--color-negative); }
 .kpi-neutral .kpi-value { color: var(--color-neutral); }
 
+.kpi-subvalue {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* --------------------------------------------------------------- panels */
 
 .panel {

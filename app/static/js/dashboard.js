@@ -190,6 +190,12 @@
       document.getElementById("kpi-theme").textContent = data.most_discussed_theme
         ? `${data.most_discussed_theme.theme} (${data.most_discussed_theme.count})`
         : "—";
+
+      const ew = data.engagement_weighted;
+      const weightedLabel = (pct) => (ew ? `engagement-wtd ${pct}%` : "—");
+      document.getElementById("kpi-positive-weighted").textContent = weightedLabel(ew && ew.percentages.positive);
+      document.getElementById("kpi-negative-weighted").textContent = weightedLabel(ew && ew.percentages.negative);
+      document.getElementById("kpi-neutral-weighted").textContent = weightedLabel(ew && ew.percentages.neutral);
     });
   }
 

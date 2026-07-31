@@ -169,8 +169,8 @@ filter on that dimension"; sending it with an empty value means "match
 nothing" (e.g. every checkbox unchecked).
 
 - `GET /api/meta` -- platform/sentiment/region enums, dataset date bounds, total row count.
-- `GET /api/summary` -- total comments, sentiment split (counts + %), most-discussed theme.
-- `GET /api/timeline` -- monthly sentiment counts + the known-event markers from `CONTEXT.md`.
+- `GET /api/summary` -- total comments, sentiment split (counts + %), most-discussed theme, and an `engagement_weighted` block (see below).
+- `GET /api/timeline` -- monthly sentiment counts (plain + engagement-weighted) + the known-event markers from `CONTEXT.md`.
 - `GET /api/events` -- the known-event list on its own.
 - `GET /api/by-platform` -- sentiment split per platform.
 - `GET /api/by-region` -- sentiment split per region (nepal/india/unknown); see DATA_SOURCES.md's Region Heuristic section for why `unknown` dominates on real data.
@@ -178,6 +178,20 @@ nothing" (e.g. every checkbox unchecked).
 - `GET /api/themes` -- theme x sentiment counts (CONTEXT.md seed dictionary + competitor/legal extensions).
 - `GET /api/wordcloud` -- top term-frequency data per sentiment class (analysis-stage artifact; not rendered in the dashboard UI, but there for the methodology write-up).
 - `GET /api/comments` -- paginated comment table (`page`, `page_size` params too).
+
+### Engagement-weighted sentiment
+
+`/api/summary` and `/api/timeline` both return an engagement-weighted view
+alongside the plain unweighted counts (`engagement_weighted` on summary;
+`positive_weight`/`negative_weight`/`neutral_weight`/`total_weight` per
+point on timeline). Weight is `ln(1 + engagement)` per comment, not a raw
+linear sum -- a linear sum lets a handful of viral outliers (one comment
+with thousands of likes next to a sea of comments with single digits)
+silently dominate the number. `/api/summary`'s
+`engagement_weighted.max_single_comment_weight_share_pct` makes whatever
+concentration remains after the log transform visible rather than hidden
+-- treat the weighted split with caution if that's large relative to the
+comment count in the current filter.
 
 ## Dashboard
 

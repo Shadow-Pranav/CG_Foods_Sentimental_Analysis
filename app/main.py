@@ -114,6 +114,54 @@ class Filters:
         return " AND ".join(clauses), params
 
 
+def compute_engagement_weighted(conn, where_sql: str, params: list) -> dict:
+    """Engagement-weighted sentiment split, alongside the plain unweighted
+    counts every endpoint already returns. Weight = ln(1 + engagement)
+    rather than a naive linear sum of engagement: a raw linear sum lets a
+    handful of viral outliers (a comment with 5,000 likes next to a sea of
+    comments with 0-10) completely dominate the number invisibly. The log
+    transform compresses that range while still giving more-engaged
+    comments more say. max_single_comment_weight_share_pct makes whatever
+    concentration remains visible rather than hiding it -- if one comment
+    is still, say, 15% of the total weight, that's worth knowing before
+    trusting the weighted split."""
+    counts = {"positive": 0.0, "negative": 0.0, "neutral": 0.0}
+    rows = conn.execute(
+        f"SELECT final_label, SUM(LN(1 + MAX(engagement, 0))) as weight "
+        f"FROM comments WHERE {where_sql} GROUP BY final_label",
+        params,
+    ).fetchall()
+    for r in rows:
+        if r["final_label"] in counts:
+            counts[r["final_label"]] = r["weight"] or 0.0
+    total_weight = sum(counts.values())
+    percentages = {
+        k: round((v / total_weight) * 100, 1) if total_weight else 0.0 for k, v in counts.items()
+    }
+
+    max_row = conn.execute(
+        f"SELECT MAX(LN(1 + MAX(engagement, 0))) as max_weight FROM comments WHERE {where_sql}",
+        params,
+    ).fetchone()
+    max_weight = (max_row["max_weight"] or 0.0) if max_row else 0.0
+    max_share_pct = round((max_weight / total_weight) * 100, 1) if total_weight else 0.0
+
+    return {
+        "weight_function": "ln(1 + engagement)",
+        "percentages": percentages,
+        "total_weight": round(total_weight, 2),
+        "max_single_comment_weight_share_pct": max_share_pct,
+        "note": (
+            "Weighted by ln(1+engagement) per comment, not a linear sum, so "
+            "viral outliers can't silently dominate. "
+            "max_single_comment_weight_share_pct is what the single "
+            "highest-engagement comment in this filtered set contributes to "
+            "the total weight -- treat the weighted split with caution if "
+            "this is large relative to the number of comments."
+        ),
+    }
+
+
 def month_range(start: str, end: str) -> list:
     """Inclusive list of 'YYYY-MM' periods between two ISO date strings."""
     d0 = date.fromisoformat(start)
@@ -196,7 +244,8 @@ def api_summary(platform: str = Query(None), sentiment: str = Query(None), regio
     if not table_exists(conn, "comments"):
         conn.close()
         return {"total_comments": 0, "counts": {"positive": 0, "negative": 0, "neutral": 0},
-                "percentages": {"positive": 0, "negative": 0, "neutral": 0}, "most_discussed_theme": None}
+                "percentages": {"positive": 0, "negative": 0, "neutral": 0}, "most_discussed_theme": None,
+                "engagement_weighted": None}
 
     where_sql, params = filters.where_clause()
     rows = conn.execute(
@@ -231,12 +280,15 @@ def api_summary(platform: str = Query(None), sentiment: str = Query(None), regio
         theme, count = max(theme_counter.items(), key=lambda kv: kv[1])
         most_discussed = {"theme": theme, "count": count}
 
+    engagement_weighted = compute_engagement_weighted(conn, where_sql, params)
+
     conn.close()
     return {
         "total_comments": total,
         "counts": counts,
         "percentages": percentages,
         "most_discussed_theme": most_discussed,
+        "engagement_weighted": engagement_weighted,
     }
 
 
@@ -255,6 +307,7 @@ def api_timeline(platform: str = Query(None), sentiment: str = Query(None), regi
         filters.end_date or WINDOW_END,
     )
     by_period = {p: {"positive": 0, "negative": 0, "neutral": 0} for p in periods}
+    by_period_weight = {p: {"positive": 0.0, "negative": 0.0, "neutral": 0.0} for p in periods}
 
     if table_exists(conn, "comments"):
         where_sql, params = filters.where_clause()
@@ -269,21 +322,47 @@ def api_timeline(platform: str = Query(None), sentiment: str = Query(None), regi
         for r in rows:
             if r["period"] in by_period and r["final_label"] in by_period[r["period"]]:
                 by_period[r["period"]][r["final_label"]] = r["cnt"]
+
+        # Engagement-weighted (ln(1+engagement), see compute_engagement_weighted's
+        # docstring for why not a naive linear sum) alongside the plain counts.
+        weight_rows = conn.execute(
+            f"""
+            SELECT strftime('%Y-%m', timestamp) as period, final_label,
+                   SUM(LN(1 + MAX(engagement, 0))) as weight
+            FROM comments WHERE {where_sql}
+            GROUP BY period, final_label
+            """,
+            params,
+        ).fetchall()
+        for r in weight_rows:
+            if r["period"] in by_period_weight and r["final_label"] in by_period_weight[r["period"]]:
+                by_period_weight[r["period"]][r["final_label"]] = r["weight"] or 0.0
     conn.close()
 
     points = []
     for p in periods:
         counts = by_period[p]
         total = sum(counts.values())
+        weights = by_period_weight[p]
+        total_weight = sum(weights.values())
         points.append({
             "period": p,
             "positive": counts["positive"],
             "negative": counts["negative"],
             "neutral": counts["neutral"],
             "total": total,
+            "positive_weight": round(weights["positive"], 2),
+            "negative_weight": round(weights["negative"], 2),
+            "neutral_weight": round(weights["neutral"], 2),
+            "total_weight": round(total_weight, 2),
         })
 
-    return {"granularity": "month", "points": points, "events": KNOWN_EVENTS}
+    return {
+        "granularity": "month",
+        "points": points,
+        "events": KNOWN_EVENTS,
+        "weight_function": "ln(1 + engagement)",
+    }
 
 
 # ---------------------------------------------------------------------------
