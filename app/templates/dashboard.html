@@ -199,6 +199,27 @@
       </div>
     </section>
 
+    <section class="panel" id="wordcloud-panel">
+      <div class="panel-header">
+        <h2>Top terms by sentiment</h2>
+        <span class="panel-sub">Post-stopword term frequency, split by sentiment class (GET /api/wordcloud) &mdash; unfiltered by the sidebar, reflects the full dataset</span>
+      </div>
+      <div class="wordcloud-charts">
+        <div class="wordcloud-cell">
+          <h3 class="wordcloud-heading sentiment-positive">Positive</h3>
+          <div class="chart-wrap chart-wrap-terms"><canvas id="chart-terms-positive"></canvas></div>
+        </div>
+        <div class="wordcloud-cell">
+          <h3 class="wordcloud-heading sentiment-negative">Negative</h3>
+          <div class="chart-wrap chart-wrap-terms"><canvas id="chart-terms-negative"></canvas></div>
+        </div>
+        <div class="wordcloud-cell">
+          <h3 class="wordcloud-heading sentiment-neutral">Neutral</h3>
+          <div class="chart-wrap chart-wrap-terms"><canvas id="chart-terms-neutral"></canvas></div>
+        </div>
+      </div>
+    </section>
+
     <section class="panel" id="table-panel">
       <div class="panel-header">
         <h2>Comments</h2>

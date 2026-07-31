@@ -207,7 +207,7 @@ nothing" (e.g. every checkbox unchecked).
 - `GET /api/region-comparison` -- unfiltered: for each known event, Nepal vs. India sentiment counts and negative-share in a &plusmn;30-day window around it. Directly answers CONTEXT.md's "does Nepal-sourced sentiment differ from India-sourced sentiment" question.
 - `GET /api/themes` -- theme x sentiment counts (CONTEXT.md seed dictionary + competitor/legal extensions).
 - `GET /api/competitors` -- mention count and sentiment split per named competitor (Current Noodles, 2PM Noodles, Maggi, Sunfeast Yippee!), plus a monthly trend per competitor mirroring `/api/timeline`'s shape.
-- `GET /api/wordcloud` -- top term-frequency data per sentiment class (analysis-stage artifact; not rendered in the dashboard UI, but there for the methodology write-up).
+- `GET /api/wordcloud` -- top term-frequency data per sentiment class (`pipeline/analyze.py`'s precomputed artifact, not filter-aware). Rendered on the dashboard as three ranked horizontal-bar "top terms" charts (a Chart.js-consistent alternative to a true word cloud, per the no-extra-libraries constraint) rather than as a literal word cloud.
 - `GET /api/comments` -- paginated comment table (`page`, `page_size` params too).
 
 ### Engagement-weighted sentiment
@@ -236,8 +236,9 @@ with thin dashed vertical lines marking the `CONTEXT.md` events, three
 small per-platform donut charts, three small per-region donut charts, a
 Nepal-vs-India comparison table around each known event (always unfiltered
 -- it's answering a fixed analytical question, not a filtered view), a
-theme-frequency bar chart split by sentiment, and a paginated comment
-table.
+theme-frequency bar chart split by sentiment, a named-competitor mentions
+chart, three ranked "top terms" bar charts (one per sentiment class), and
+a paginated comment table.
 
 ## Known limitations (see `METHODOLOGY.md` section 5 for the full list)
 

@@ -154,6 +154,7 @@
       refreshAll();
       refreshRegionComparison(); // unfiltered/static, so only needs loading once
       refreshEventAnalysis(); // ditto
+      refreshWordcloud(); // ditto -- analyze.py's precomputed term frequency, not filter-aware
     });
   }
 
@@ -382,6 +383,58 @@
         `;
         tbody.appendChild(tr);
       });
+    });
+  }
+
+  const TERM_CHART_TOP_N = 12;
+
+  function refreshWordcloud() {
+    return fetchJSON("/api/wordcloud").then((data) => {
+      renderTermChart("positive", data.positive);
+      renderTermChart("negative", data.negative);
+      renderTermChart("neutral", data.neutral);
+    });
+  }
+
+  function renderTermChart(sentiment, terms) {
+    const elId = `chart-terms-${sentiment}`;
+    const el = document.getElementById(elId);
+    if (!el) return;
+
+    // Already sorted desc by pipeline/analyze.py; take the top N and
+    // reverse so the highest-frequency term renders at the top of the
+    // horizontal bar chart (Chart.js draws category axis bottom-up).
+    const top = terms.slice(0, TERM_CHART_TOP_N).reverse();
+    const labels = top.map((t) => t.term);
+    const counts = top.map((t) => t.count);
+    const color = COLORS[sentiment];
+
+    if (charts[`terms_${sentiment}`]) {
+      charts[`terms_${sentiment}`].data.labels = labels;
+      charts[`terms_${sentiment}`].data.datasets[0].data = counts;
+      charts[`terms_${sentiment}`].update();
+      return;
+    }
+
+    charts[`terms_${sentiment}`] = new Chart(el.getContext("2d"), {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{ data: counts, backgroundColor: color, barThickness: 12 }],
+      },
+      options: {
+        indexAxis: "y",
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: COLORS.border } },
+          y: { grid: { display: false } },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: { backgroundColor: COLORS.text, titleColor: "#F6F1E9", bodyColor: "#F6F1E9" },
+        },
+      },
     });
   }
 

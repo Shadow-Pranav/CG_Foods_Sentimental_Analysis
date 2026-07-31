@@ -314,6 +314,28 @@ h1, h2, h3 {
 .chart-wrap-tall { height: 320px; }
 .chart-wrap-medium { height: 280px; }
 .chart-wrap-small { height: 150px; }
+.chart-wrap-terms { height: 340px; }
+
+.wordcloud-charts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+.wordcloud-cell {
+  border-right: 1px solid var(--color-border);
+}
+.wordcloud-cell:last-child { border-right: none; }
+.wordcloud-heading {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: center;
+  margin: 12px 0 0;
+}
+.wordcloud-heading.sentiment-positive { color: var(--color-positive); }
+.wordcloud-heading.sentiment-negative { color: var(--color-negative); }
+.wordcloud-heading.sentiment-neutral { color: var(--color-neutral); }
 
 .platform-charts {
   display: grid;
@@ -420,6 +442,8 @@ tbody tr:hover {
   .kpi-row { grid-template-columns: repeat(2, 1fr); }
   .platform-charts { grid-template-columns: 1fr; }
   .platform-chart-cell { border-right: none; border-bottom: 1px solid var(--color-border); }
+  .wordcloud-charts { grid-template-columns: 1fr; }
+  .wordcloud-cell { border-right: none; border-bottom: 1px solid var(--color-border); }
   .layout { flex-direction: column; }
   .sidebar { width: 100%; flex: none; min-height: 0; }
 }
