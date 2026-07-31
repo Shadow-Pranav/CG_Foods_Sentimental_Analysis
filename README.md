@@ -240,6 +240,30 @@ theme-frequency bar chart split by sentiment, a named-competitor mentions
 chart, three ranked "top terms" bar charts (one per sentiment class), and
 a paginated comment table.
 
+## Running tests
+
+```bash
+python -m pytest tests/ -v
+```
+
+Covers: `pipeline/clean.py`'s dedup/near-dup/spam-filter logic (known
+duplicate/near-duplicate/spam/genuine fixtures, asserting the resulting
+`exclusion_reason`); region assignment (`pick_region`'s weighted sampling,
+`guess_region_from_location_text`'s heuristic); engagement-weighted
+sentiment math (`compute_engagement_weighted`, including the log-transform
+outlier test and the zero-engagement/negative-engagement edge cases);
+event significance testing (`analyze_event`'s chi-square/Fisher's-exact
+selection, the +inf-odds-ratio JSON-serialization fix, insufficient-data
+handling); and `app/main.py`'s API filter combinations (platform +
+sentiment + region + date + keyword search together, empty-param-means-
+nothing vs. omitted-param-means-no-filter, pagination, ordering, and
+`exclusion_reason` never leaking through regardless of filters).
+
+The API tests use FastAPI's `TestClient` against a temp SQLite file seeded
+with known rows per test (see `tests/conftest.py`) -- they don't touch
+`data/sentiment.db`, so running the suite never disturbs your working
+dataset.
+
 ## Known limitations (see `METHODOLOGY.md` section 5 for the full list)
 
 - The dataset is synthetic, not real collected data -- treat everything in

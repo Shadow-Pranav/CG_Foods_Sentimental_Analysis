@@ -67,8 +67,12 @@ ALLOWED_LANGUAGES = {"en", "ne", "hi"}  # per PROJECT_INSTRUCTIONS.md scope
 
 
 def strip_text(text_raw: str) -> tuple:
-    """Returns (text_clean, emoji_count)."""
-    emoji_count = len(EMOJI_PATTERN.findall(text_raw))
+    """Returns (text_clean, emoji_count). emoji_count sums the length of
+    each matched run rather than counting matches directly: EMOJI_PATTERN
+    is a `+`-quantified character class, so consecutive emoji (e.g. "😍😍")
+    match as a single run and a plain len(findall(...)) would undercount
+    them as 1 instead of 2."""
+    emoji_count = sum(len(run) for run in EMOJI_PATTERN.findall(text_raw))
 
     text = html.unescape(text_raw)
     text = HTML_TAG_PATTERN.sub(" ", text)
