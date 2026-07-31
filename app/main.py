@@ -30,6 +30,13 @@ app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="stati
 VALID_PLATFORMS = ["youtube", "twitter", "facebook"]
 VALID_SENTIMENTS = ["positive", "negative", "neutral"]
 VALID_REGIONS = ["nepal", "india", "unknown"]
+COMPETITOR_TAGS = ["current_noodles", "2pm_noodles", "maggi", "yippee"]
+COMPETITOR_DISPLAY_NAMES = {
+    "current_noodles": "Current Noodles",
+    "2pm_noodles": "2PM Noodles",
+    "maggi": "Maggi",
+    "yippee": "Sunfeast Yippee!",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +588,66 @@ def api_themes(platform: str = Query(None), sentiment: str = Query(None), region
     themes_out.sort(key=lambda t: t["total"], reverse=True)
 
     return {"themes": themes_out}
+
+
+# ---------------------------------------------------------------------------
+# API: per-competitor share of voice (Current Noodles / 2PM Noodles / Maggi
+# / Sunfeast Yippee!, per CONTEXT.md's named rivals) -- overall split plus
+# a monthly trend, mirroring /api/timeline's shape.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/competitors")
+def api_competitors(platform: str = Query(None), sentiment: str = Query(None), region: str = Query(None),
+                     start_date: str = Query(None), end_date: str = Query(None), q: str = Query(None)):
+    filters = Filters(platform, sentiment, start_date, end_date, q, region)
+    conn = get_db()
+
+    totals = {c: {"positive": 0, "negative": 0, "neutral": 0} for c in COMPETITOR_TAGS}
+    periods = month_range(filters.start_date or WINDOW_START, filters.end_date or WINDOW_END)
+    monthly = {c: {p: {"positive": 0, "negative": 0, "neutral": 0} for p in periods} for c in COMPETITOR_TAGS}
+
+    if table_exists(conn, "comments"):
+        where_sql, params = filters.where_clause()
+        rows = conn.execute(
+            f"""
+            SELECT strftime('%Y-%m', timestamp) as period, final_label, themes
+            FROM comments WHERE {where_sql} AND themes IS NOT NULL
+            """,
+            params,
+        ).fetchall()
+        for r in rows:
+            try:
+                themes = json.loads(r["themes"]) if r["themes"] else []
+            except (json.JSONDecodeError, TypeError):
+                themes = []
+            label = r["final_label"]
+            period = r["period"]
+            for competitor in themes:
+                if competitor not in totals:
+                    continue
+                if label in totals[competitor]:
+                    totals[competitor][label] += 1
+                if period in monthly[competitor] and label in monthly[competitor][period]:
+                    monthly[competitor][period][label] += 1
+    conn.close()
+
+    competitors_out = []
+    for c in COMPETITOR_TAGS:
+        counts = totals[c]
+        total = sum(counts.values())
+        competitors_out.append({
+            "competitor": c,
+            "display_name": COMPETITOR_DISPLAY_NAMES[c],
+            "total": total,
+            "counts": counts,
+            "monthly": [
+                {"period": p, **monthly[c][p], "total": sum(monthly[c][p].values())}
+                for p in periods
+            ],
+        })
+    competitors_out.sort(key=lambda c: c["total"], reverse=True)
+
+    return {"competitors": competitors_out}
 
 
 # ---------------------------------------------------------------------------

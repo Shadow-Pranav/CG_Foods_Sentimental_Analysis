@@ -183,6 +183,7 @@
       refreshByPlatform(),
       refreshByRegion(),
       refreshThemes(),
+      refreshCompetitors(),
       refreshComments(),
     ]).catch((err) => console.error("Dashboard refresh failed:", err));
   }
@@ -386,44 +387,66 @@
 
   function refreshThemes() {
     return fetchJSON(`/api/themes?${buildParams()}`).then((data) => {
-      const labels = data.themes.map((t) => t.theme);
-      const positive = data.themes.map((t) => t.positive);
-      const negative = data.themes.map((t) => t.negative);
-      const neutral = data.themes.map((t) => t.neutral);
+      renderSentimentBarChart(
+        "theme",
+        "theme-chart",
+        data.themes.map((t) => t.theme),
+        data.themes
+      );
+    });
+  }
 
-      if (charts.theme) {
-        charts.theme.data.labels = labels;
-        charts.theme.data.datasets[0].data = positive;
-        charts.theme.data.datasets[1].data = negative;
-        charts.theme.data.datasets[2].data = neutral;
-        charts.theme.update();
-        return;
-      }
+  function refreshCompetitors() {
+    return fetchJSON(`/api/competitors?${buildParams()}`).then((data) => {
+      renderSentimentBarChart(
+        "competitor",
+        "competitor-chart",
+        data.competitors.map((c) => c.display_name),
+        data.competitors.map((c) => c.counts)
+      );
+    });
+  }
 
-      const ctx = document.getElementById("theme-chart").getContext("2d");
-      charts.theme = new Chart(ctx, {
-        type: "bar",
-        data: {
-          labels,
-          datasets: [
-            { label: "Positive", data: positive, backgroundColor: COLORS.positive },
-            { label: "Negative", data: negative, backgroundColor: COLORS.negative },
-            { label: "Neutral", data: neutral, backgroundColor: COLORS.neutral },
-          ],
+  // Shared grouped-bar renderer for both the theme-frequency and
+  // competitor-mentions charts -- same shape (category axis + positive/
+  // negative/neutral series), just a different data source.
+  function renderSentimentBarChart(key, elId, labels, rowsWithCounts) {
+    const positive = rowsWithCounts.map((r) => r.positive);
+    const negative = rowsWithCounts.map((r) => r.negative);
+    const neutral = rowsWithCounts.map((r) => r.neutral);
+
+    if (charts[key]) {
+      charts[key].data.labels = labels;
+      charts[key].data.datasets[0].data = positive;
+      charts[key].data.datasets[1].data = negative;
+      charts[key].data.datasets[2].data = neutral;
+      charts[key].update();
+      return;
+    }
+
+    const ctx = document.getElementById(elId).getContext("2d");
+    charts[key] = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [
+          { label: "Positive", data: positive, backgroundColor: COLORS.positive },
+          { label: "Negative", data: negative, backgroundColor: COLORS.negative },
+          { label: "Neutral", data: neutral, backgroundColor: COLORS.neutral },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { grid: { display: false } },
+          y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: COLORS.border } },
         },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: { grid: { display: false } },
-            y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: COLORS.border } },
-          },
-          plugins: {
-            legend: { position: "top", align: "end", labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true } },
-            tooltip: { backgroundColor: COLORS.text, titleColor: "#F6F1E9", bodyColor: "#F6F1E9" },
-          },
+        plugins: {
+          legend: { position: "top", align: "end", labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true } },
+          tooltip: { backgroundColor: COLORS.text, titleColor: "#F6F1E9", bodyColor: "#F6F1E9" },
         },
-      });
+      },
     });
   }
 

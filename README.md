@@ -206,6 +206,7 @@ nothing" (e.g. every checkbox unchecked).
 - `GET /api/by-region` -- sentiment split per region (nepal/india/unknown); see DATA_SOURCES.md's Region Heuristic section for why `unknown` dominates on real data.
 - `GET /api/region-comparison` -- unfiltered: for each known event, Nepal vs. India sentiment counts and negative-share in a &plusmn;30-day window around it. Directly answers CONTEXT.md's "does Nepal-sourced sentiment differ from India-sourced sentiment" question.
 - `GET /api/themes` -- theme x sentiment counts (CONTEXT.md seed dictionary + competitor/legal extensions).
+- `GET /api/competitors` -- mention count and sentiment split per named competitor (Current Noodles, 2PM Noodles, Maggi, Sunfeast Yippee!), plus a monthly trend per competitor mirroring `/api/timeline`'s shape.
 - `GET /api/wordcloud` -- top term-frequency data per sentiment class (analysis-stage artifact; not rendered in the dashboard UI, but there for the methodology write-up).
 - `GET /api/comments` -- paginated comment table (`page`, `page_size` params too).
 

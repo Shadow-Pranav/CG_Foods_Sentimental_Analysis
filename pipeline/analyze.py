@@ -71,6 +71,20 @@ THEME_KEYWORDS = {
     ],
 }
 
+# Per-competitor sub-tags, seeded from CONTEXT.md's named rivals (Current
+# Noodles and 2PM Noodles in the Nepal spicy-noodle segment; Maggi and
+# Sunfeast Yippee! as the established India-market leaders Wai Wai is
+# compared against nationally). A comment gets both the umbrella
+# "competitor" tag above (for the existing theme chart) AND whichever
+# specific competitor sub-tag(s) it names, so share-of-voice can be broken
+# out per named rival rather than lumped together.
+COMPETITOR_KEYWORDS = {
+    "current_noodles": ["current noodles"],
+    "2pm_noodles": ["2pm noodles"],
+    "maggi": ["maggi"],
+    "yippee": ["yippee", "sunfeast yippee"],
+}
+
 STANDARD_STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for",
     "with", "this", "that", "it", "its", "i", "my", "me", "so", "was",
@@ -106,6 +120,9 @@ def tag_themes(text_clean: str) -> list:
     for theme, keywords in THEME_KEYWORDS.items():
         if any(kw in lowered for kw in keywords):
             tags.append(theme)
+    for competitor, keywords in COMPETITOR_KEYWORDS.items():
+        if any(kw in lowered for kw in keywords):
+            tags.append(competitor)
     return tags
 
 
