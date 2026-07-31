@@ -50,6 +50,16 @@
     </div>
 
     <div class="filter-group">
+      <h2>Region</h2>
+      {% for r in regions %}
+      <label class="checkbox-row">
+        <input type="checkbox" class="filter-region" value="{{ r }}" checked>
+        <span>{{ r|capitalize }}</span>
+      </label>
+      {% endfor %}
+    </div>
+
+    <div class="filter-group">
       <h2>Keyword search</h2>
       <input type="text" id="keyword-search" placeholder="e.g. price, quality, Current Noodles" class="text-input">
     </div>
@@ -60,6 +70,7 @@
 
     <div class="filter-footnote">
       <p>Facebook and X/Twitter volumes are structurally smaller than YouTube in this dataset (see DATA_SOURCES.md) &mdash; do not read cross-platform totals as comparable sample sizes.</p>
+      <p>Region is a best-effort signal derived from whatever location text a platform exposes; on real collected data expect "Unknown" to dominate (see DATA_SOURCES.md's Region Heuristic section).</p>
     </div>
   </aside>
 
@@ -119,6 +130,49 @@
       </div>
     </section>
 
+    <section class="panel" id="region-panel">
+      <div class="panel-header">
+        <h2>Sentiment by region</h2>
+        <span class="panel-sub">Nepal / India / Unknown &mdash; best-effort signal, see sidebar note</span>
+      </div>
+      <div class="platform-charts">
+        <div class="platform-chart-cell">
+          <div class="chart-wrap chart-wrap-small"><canvas id="chart-region-nepal"></canvas></div>
+          <div class="platform-chart-caption"><strong>Nepal</strong> <span id="n-region-nepal">n=0</span></div>
+        </div>
+        <div class="platform-chart-cell">
+          <div class="chart-wrap chart-wrap-small"><canvas id="chart-region-india"></canvas></div>
+          <div class="platform-chart-caption"><strong>India</strong> <span id="n-region-india">n=0</span></div>
+        </div>
+        <div class="platform-chart-cell">
+          <div class="chart-wrap chart-wrap-small"><canvas id="chart-region-unknown"></canvas></div>
+          <div class="platform-chart-caption"><strong>Unknown</strong> <span id="n-region-unknown">n=0</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="region-comparison-panel">
+      <div class="panel-header">
+        <h2>Nepal vs. India around key events</h2>
+        <span class="panel-sub">Share of negative sentiment in the &plusmn;30-day window around each known event, by region (unfiltered by the sidebar &mdash; this is always the full dataset)</span>
+      </div>
+      <div class="table-wrap">
+        <table id="region-comparison-table">
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>Date</th>
+              <th class="col-engagement">Nepal n</th>
+              <th class="col-engagement">Nepal neg.%</th>
+              <th class="col-engagement">India n</th>
+              <th class="col-engagement">India neg.%</th>
+            </tr>
+          </thead>
+          <tbody id="region-comparison-tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="panel" id="theme-panel">
       <div class="panel-header">
         <h2>Theme frequency by sentiment</h2>
@@ -140,6 +194,7 @@
             <tr>
               <th class="col-date">Date</th>
               <th class="col-platform">Platform</th>
+              <th class="col-region">Region</th>
               <th class="col-sentiment">Sentiment</th>
               <th class="col-themes">Themes</th>
               <th class="col-text">Comment</th>

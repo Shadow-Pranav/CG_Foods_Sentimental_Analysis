@@ -162,17 +162,19 @@ the current pipeline output.
 
 All data endpoints accept the same filter query params: `platform`
 (comma-separated: `youtube,twitter,facebook`), `sentiment`
-(comma-separated: `positive,negative,neutral`), `start_date` /
-`end_date` (`YYYY-MM-DD`), and `q` (keyword search over both raw and
-cleaned text). Omitting a param means "no filter on that dimension";
-sending it with an empty value means "match nothing" (e.g. every
-checkbox unchecked).
+(comma-separated: `positive,negative,neutral`), `region` (comma-separated:
+`nepal,india,unknown`), `start_date` / `end_date` (`YYYY-MM-DD`), and `q`
+(keyword search over both raw and cleaned text). Omitting a param means "no
+filter on that dimension"; sending it with an empty value means "match
+nothing" (e.g. every checkbox unchecked).
 
-- `GET /api/meta` -- platform/sentiment enums, dataset date bounds, total row count.
+- `GET /api/meta` -- platform/sentiment/region enums, dataset date bounds, total row count.
 - `GET /api/summary` -- total comments, sentiment split (counts + %), most-discussed theme.
 - `GET /api/timeline` -- monthly sentiment counts + the known-event markers from `CONTEXT.md`.
 - `GET /api/events` -- the known-event list on its own.
 - `GET /api/by-platform` -- sentiment split per platform.
+- `GET /api/by-region` -- sentiment split per region (nepal/india/unknown); see DATA_SOURCES.md's Region Heuristic section for why `unknown` dominates on real data.
+- `GET /api/region-comparison` -- unfiltered: for each known event, Nepal vs. India sentiment counts and negative-share in a &plusmn;30-day window around it. Directly answers CONTEXT.md's "does Nepal-sourced sentiment differ from India-sourced sentiment" question.
 - `GET /api/themes` -- theme x sentiment counts (CONTEXT.md seed dictionary + competitor/legal extensions).
 - `GET /api/wordcloud` -- top term-frequency data per sentiment class (analysis-stage artifact; not rendered in the dashboard UI, but there for the methodology write-up).
 - `GET /api/comments` -- paginated comment table (`page`, `page_size` params too).
@@ -181,13 +183,16 @@ checkbox unchecked).
 
 Single page at `/`, plain HTML/CSS/vanilla JS + Jinja2 + Chart.js (loaded
 from a CDN `<script>` tag -- no build step, no npm). Top bar has the
-project name and a date-range control; the left sidebar has platform and
-sentiment checkboxes plus a keyword search box, all wired to the API
-filters above and applied dashboard-wide (KPIs, charts, and table all
-update together). Main area: a KPI row, the sentiment-over-time chart with
-thin dashed vertical lines marking the `CONTEXT.md` events, three small
-per-platform donut charts, a theme-frequency bar chart split by sentiment,
-and a paginated comment table.
+project name and a date-range control; the left sidebar has platform,
+sentiment, and region checkboxes plus a keyword search box, all wired to
+the API filters above and applied dashboard-wide (KPIs, charts, and table
+all update together). Main area: a KPI row, the sentiment-over-time chart
+with thin dashed vertical lines marking the `CONTEXT.md` events, three
+small per-platform donut charts, three small per-region donut charts, a
+Nepal-vs-India comparison table around each known event (always unfiltered
+-- it's answering a fixed analytical question, not a filtered view), a
+theme-frequency bar chart split by sentiment, and a paginated comment
+table.
 
 ## Known limitations (see `METHODOLOGY.md` section 5 for the full list)
 
@@ -206,3 +211,9 @@ and a paginated comment table.
 - Event-to-sentiment correlation shown on the timeline is suggestive, not
   causal -- no confounders (seasonality, unrelated news cycles) are
   controlled for.
+- `region` (nepal/india/unknown) is a best-effort signal, not verified
+  geography -- see DATA_SOURCES.md's Region Heuristic section. It's fully
+  populated in the synthetic sample data (generated top-down from known
+  event/theme context) but would skew heavily toward `unknown` on real
+  collected data, since none of YouTube/X/Facebook's public APIs reliably
+  expose a commenter's actual location.

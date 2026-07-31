@@ -268,9 +268,21 @@ def main():
     conn.commit()
     conn.close()
 
+    # Merge into the existing report rather than clobbering it -- if
+    # pipeline/evaluate.py already wrote a "human_gold_evaluation" section
+    # from a prior human-labeling pass, a later classify.py rerun
+    # shouldn't silently delete it.
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    existing = {}
+    if REPORT_PATH.exists():
+        with open(REPORT_PATH) as f:
+            try:
+                existing = json.load(f)
+            except json.JSONDecodeError:
+                existing = {}
+    existing.update(report)
     with open(REPORT_PATH, "w") as f:
-        json.dump(report, f, indent=2)
+        json.dump(existing, f, indent=2)
 
     print(f"Classified {len(rows)} rows.")
     print(json.dumps(report, indent=2))

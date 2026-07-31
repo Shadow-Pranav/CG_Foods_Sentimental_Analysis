@@ -22,7 +22,11 @@ box in this environment (no live API keys / scraping access here).
 Output schema matches DATA_SOURCES.md's "Suggested Schema" table and
 generate_sample_data.py's CSV, so pipeline/clean.py can consume either
 source interchangeably: id, platform, text_raw, timestamp, source_ref,
-engagement, language_guess, author_id, gold_sentiment.
+engagement, language_guess, author_id, gold_sentiment, region. See
+DATA_SOURCES.md's "Region Heuristic" section for how `region`
+(nepal/india/unknown) is derived per platform and its expected
+false-negative rate -- none of these platforms reliably expose commenter
+geography via public APIs, so "unknown" will dominate in practice.
 
 Usage:
     python pipeline/collect.py
@@ -56,8 +60,47 @@ SEARCH_KEYWORDS = [
 
 CSV_FIELDS = [
     "id", "platform", "text_raw", "timestamp", "source_ref",
-    "engagement", "language_guess", "author_id", "gold_sentiment",
+    "engagement", "language_guess", "author_id", "gold_sentiment", "region",
 ]
+
+# ---------------------------------------------------------------------------
+# Region heuristic (Nepal / India / unknown) -- see DATA_SOURCES.md's
+# "Region Heuristic" section for the false-negative-rate discussion. None
+# of YouTube/X/Facebook's public APIs expose a commenter's actual location
+# directly; this matches self-reported, free-text location signal where a
+# platform exposes one at all, and returns "unknown" otherwise. Expect a
+# high unknown rate in practice (most users don't fill in a location field,
+# and YouTube's public comment API exposes none at all by default) -- this
+# is a best-effort signal, not ground truth.
+# ---------------------------------------------------------------------------
+
+NEPAL_LOCATION_KEYWORDS = [
+    "nepal", "kathmandu", "pokhara", "lalitpur", "biratnagar", "birgunj",
+    "np ",
+]
+INDIA_LOCATION_KEYWORDS = [
+    "india", "assam", "guwahati", "north east india", "ne india", "delhi",
+    "mumbai", "kolkata", "bengaluru", "bangalore", "manipur", "meghalaya",
+    "nagaland", "tripura", "sikkim", "mizoram", "arunachal",
+]
+
+
+def guess_region_from_location_text(location_text: str) -> str:
+    """Best-effort match against a free-text location field (X profile
+    location, Facebook Page name, YouTube channel country name). Returns
+    'nepal', 'india', or 'unknown'. Deliberately does NOT match bare 2-letter
+    country codes like 'np'/'in' as substrings (too many false positives in
+    free text -- 'in' collides with the English word); only Nepal's code is
+    matched, and only as a trailing token with a space, which is still weak
+    and mostly here for completeness rather than expected to fire often."""
+    if not location_text:
+        return "unknown"
+    lowered = f" {location_text.lower().strip()} "
+    if any(k in lowered for k in NEPAL_LOCATION_KEYWORDS):
+        return "nepal"
+    if any(k in lowered for k in INDIA_LOCATION_KEYWORDS):
+        return "india"
+    return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -68,10 +111,37 @@ def collect_youtube(api_key: str, max_videos: int = 15, max_comments_per_video: 
     """search.list (100 quota units/call) to discover videos, then
     commentThreads.list (1 unit/call) to pull top-level comments -- the
     front-load-discovery-then-batch-comments approach DATA_SOURCES.md
-    recommends to stay under the 10,000 units/day free-tier quota."""
+    recommends to stay under the 10,000 units/day free-tier quota.
+
+    Region: YouTube's public commentThreads API does not expose a
+    commenter's location at all. The only real signal available is each
+    commenter's own channel `snippet.country` field (self-reported, and
+    most users never set it) via an extra channels.list call per unique
+    commenter -- expensive in quota (1 unit/call, but one per distinct
+    author). Off by default; set YOUTUBE_RESOLVE_COMMENTER_REGION=true to
+    enable it. With it off (the default), region is always "unknown" for
+    YouTube rows -- see DATA_SOURCES.md's Region Heuristic section."""
     from googleapiclient.discovery import build
 
     youtube = build("youtube", "v3", developerKey=api_key)
+    resolve_region = os.environ.get("YOUTUBE_RESOLVE_COMMENTER_REGION", "").lower() == "true"
+    channel_country_cache = {}
+
+    def channel_region(channel_id: str) -> str:
+        if not channel_id:
+            return "unknown"
+        if channel_id in channel_country_cache:
+            return channel_country_cache[channel_id]
+        try:
+            resp = youtube.channels().list(part="snippet", id=channel_id).execute()
+            items = resp.get("items", [])
+            country = items[0]["snippet"].get("country", "") if items else ""
+        except Exception:  # noqa: BLE001 - quota/permission errors shouldn't kill collection
+            country = ""
+        region = "nepal" if country == "NP" else "india" if country == "IN" else "unknown"
+        channel_country_cache[channel_id] = region
+        return region
+
     rows = []
 
     for keyword in SEARCH_KEYWORDS:
@@ -94,6 +164,8 @@ def collect_youtube(api_key: str, max_videos: int = 15, max_comments_per_video: 
 
             for c in comments_resp.get("items", []):
                 top = c["snippet"]["topLevelComment"]["snippet"]
+                author_channel_id = top.get("authorChannelId", {}).get("value", "unknown")
+                region = channel_region(author_channel_id) if resolve_region else "unknown"
                 rows.append({
                     "id": f"youtube_{c['id']}",
                     "platform": "youtube",
@@ -102,8 +174,9 @@ def collect_youtube(api_key: str, max_videos: int = 15, max_comments_per_video: 
                     "source_ref": f"yt:video_{video_id}",
                     "engagement": top.get("likeCount", 0),
                     "language_guess": "",
-                    "author_id": top.get("authorChannelId", {}).get("value", "unknown"),
+                    "author_id": author_channel_id,
                     "gold_sentiment": "",
+                    "region": region,
                 })
 
     return rows
@@ -134,6 +207,7 @@ def collect_twitter_snscrape(max_tweets: int = 200) -> list:
         for i, tweet in enumerate(sntwitter.TwitterSearchScraper(query).get_items()):
             if i >= max_tweets:
                 break
+            profile_location = getattr(tweet.user, "location", "") if tweet.user else ""
             rows.append({
                 "id": f"twitter_{tweet.id}",
                 "platform": "twitter",
@@ -144,6 +218,7 @@ def collect_twitter_snscrape(max_tweets: int = 200) -> list:
                 "language_guess": "",
                 "author_id": str(tweet.user.id) if tweet.user else "unknown",
                 "gold_sentiment": "",
+                "region": guess_region_from_location_text(profile_location),
             })
     except Exception as exc:  # noqa: BLE001 - X blocks scraping unpredictably
         print(f"[collect.py] snscrape failed ({exc}); falling back to manual export path.")
@@ -156,7 +231,8 @@ def collect_twitter_from_manual_export(csv_path: str) -> list:
     """Ingests a bounded convenience sample manually exported from the X
     web search UI, per PROJECT_INSTRUCTIONS.md's documented fallback for
     when snscrape/API access isn't available. Expected columns: text,
-    timestamp, likes, retweets, author_id (adjust to match your export)."""
+    timestamp, likes, retweets, author_id, location (location is optional --
+    the profile's free-text location field, if you captured it)."""
     path = Path(csv_path)
     if not path.exists():
         raise FileNotFoundError(f"Manual X export not found at {csv_path}")
@@ -174,6 +250,7 @@ def collect_twitter_from_manual_export(csv_path: str) -> list:
                 "language_guess": "",
                 "author_id": r.get("author_id", "unknown"),
                 "gold_sentiment": "",
+                "region": guess_region_from_location_text(r.get("location", "")),
             })
     return rows
 
@@ -197,7 +274,11 @@ def collect_facebook_live():
 
 
 def collect_facebook_from_manual_export(csv_path: str) -> list:
-    """Expected columns: text, timestamp, page_name, reactions."""
+    """Expected columns: text, timestamp, page_name, reactions. Region is
+    guessed from page_name (e.g. a "CG Foods Nepal" vs "CG Foods India"
+    Page) -- this describes the Page's market, not necessarily the
+    individual commenter's location, so treat it as an even weaker signal
+    than the X profile-location heuristic."""
     path = Path(csv_path)
     if not path.exists():
         raise FileNotFoundError(f"Manual Facebook export not found at {csv_path}")
@@ -205,16 +286,18 @@ def collect_facebook_from_manual_export(csv_path: str) -> list:
     rows = []
     with open(path, newline="", encoding="utf-8") as f:
         for i, r in enumerate(csv.DictReader(f)):
+            page_name = r.get("page_name", "")
             rows.append({
                 "id": f"facebook_manual_{i:05d}",
                 "platform": "facebook",
                 "text_raw": r.get("text", ""),
                 "timestamp": r.get("timestamp", ""),
-                "source_ref": r.get("page_name", "fb:manual_export"),
+                "source_ref": page_name or "fb:manual_export",
                 "engagement": int(r.get("reactions", 0) or 0),
                 "language_guess": "",
                 "author_id": "unknown",  # public Page posts rarely expose a stable pseudonymous commenter ID via manual export
                 "gold_sentiment": "",
+                "region": guess_region_from_location_text(page_name),
             })
     return rows
 

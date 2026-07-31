@@ -164,11 +164,11 @@ def write_to_db(cleaned_rows: list) -> None:
         """
         INSERT INTO comments (
             id, platform, text_raw, text_clean, timestamp, source_ref,
-            engagement, author_id, language_guess, emoji_count,
+            engagement, author_id, language_guess, region, emoji_count,
             exclusion_reason, gold_sentiment
         ) VALUES (
             :id, :platform, :text_raw, :text_clean, :timestamp, :source_ref,
-            :engagement, :author_id, :language_guess, :emoji_count,
+            :engagement, :author_id, :language_guess, :region, :emoji_count,
             :exclusion_reason, :gold_sentiment
         )
         """,
@@ -183,6 +183,7 @@ def write_to_db(cleaned_rows: list) -> None:
                 "engagement": int(r.get("engagement") or 0),
                 "author_id": r.get("author_id", ""),
                 "language_guess": r["language_guess"],
+                "region": r.get("region") or "unknown",
                 "emoji_count": r["emoji_count"],
                 "exclusion_reason": r["exclusion_reason"],
                 "gold_sentiment": r.get("gold_sentiment") or None,

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS comments (
     engagement INTEGER DEFAULT 0,
     author_id TEXT,
     language_guess TEXT,
+    region TEXT,
     emoji_count INTEGER DEFAULT 0,
     exclusion_reason TEXT,
     vader_compound REAL,
@@ -45,6 +46,7 @@ CREATE TABLE IF NOT EXISTS term_frequency (
 
 INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_comments_platform ON comments(platform);",
+    "CREATE INDEX IF NOT EXISTS idx_comments_region ON comments(region);",
     "CREATE INDEX IF NOT EXISTS idx_comments_timestamp ON comments(timestamp);",
     "CREATE INDEX IF NOT EXISTS idx_comments_final_label ON comments(final_label);",
     "CREATE INDEX IF NOT EXISTS idx_comments_exclusion ON comments(exclusion_reason);",

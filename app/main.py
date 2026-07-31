@@ -10,7 +10,7 @@ Run with: uvicorn app.main:app --reload
 
 import json
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
@@ -28,6 +28,7 @@ app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="stati
 
 VALID_PLATFORMS = ["youtube", "twitter", "facebook"]
 VALID_SENTIMENTS = ["positive", "negative", "neutral"]
+VALID_REGIONS = ["nepal", "india", "unknown"]
 
 
 # ---------------------------------------------------------------------------
@@ -53,15 +54,17 @@ class Filters:
     filters (platform, sentiment, keyword search) and top-bar date range
     behave consistently across the whole dashboard, not just the table."""
 
-    def __init__(self, platform, sentiment, start_date, end_date, q):
-        # `platform`/`sentiment` being None means "param not sent -> no
-        # filter" (all values). Being present-but-empty (e.g. "") means the
-        # caller explicitly selected zero values (every checkbox unchecked)
-        # -> the query should match nothing, not everything.
+    def __init__(self, platform, sentiment, start_date, end_date, q, region=None):
+        # `platform`/`sentiment`/`region` being None means "param not sent
+        # -> no filter" (all values). Being present-but-empty (e.g. "")
+        # means the caller explicitly selected zero values (every checkbox
+        # unchecked) -> the query should match nothing, not everything.
         self._platform_present = platform is not None
         self._sentiment_present = sentiment is not None
+        self._region_present = region is not None
         self.platforms = [p for p in (platform.split(",") if platform else []) if p in VALID_PLATFORMS]
         self.sentiments = [s for s in (sentiment.split(",") if sentiment else []) if s in VALID_SENTIMENTS]
+        self.regions = [r for r in (region.split(",") if region else []) if r in VALID_REGIONS]
         self.start_date = start_date or None
         self.end_date = end_date or None
         self.q = q.strip() if q else None
@@ -83,6 +86,14 @@ class Filters:
                 placeholders = ",".join("?" for _ in self.sentiments)
                 clauses.append(f"final_label IN ({placeholders})")
                 params.extend(self.sentiments)
+            else:
+                clauses.append("1=0")
+
+        if self._region_present:
+            if self.regions:
+                placeholders = ",".join("?" for _ in self.regions)
+                clauses.append(f"region IN ({placeholders})")
+                params.extend(self.regions)
             else:
                 clauses.append("1=0")
 
@@ -130,6 +141,7 @@ def dashboard(request: Request):
             "request": request,
             "platforms": VALID_PLATFORMS,
             "sentiments": VALID_SENTIMENTS,
+            "regions": VALID_REGIONS,
             "window_start": WINDOW_START,
             "window_end": WINDOW_END,
         },
@@ -148,6 +160,7 @@ def api_meta():
         return {
             "platforms": VALID_PLATFORMS,
             "sentiments": VALID_SENTIMENTS,
+            "regions": VALID_REGIONS,
             "min_date": WINDOW_START,
             "max_date": WINDOW_END,
             "total_comments": 0,
@@ -163,6 +176,7 @@ def api_meta():
     return {
         "platforms": VALID_PLATFORMS,
         "sentiments": VALID_SENTIMENTS,
+        "regions": VALID_REGIONS,
         "min_date": (row["min_ts"] or WINDOW_START)[:10],
         "max_date": (row["max_ts"] or WINDOW_END)[:10],
         "total_comments": row["total"] or 0,
@@ -175,9 +189,9 @@ def api_meta():
 # ---------------------------------------------------------------------------
 
 @app.get("/api/summary")
-def api_summary(platform: str = Query(None), sentiment: str = Query(None),
+def api_summary(platform: str = Query(None), sentiment: str = Query(None), region: str = Query(None),
                  start_date: str = Query(None), end_date: str = Query(None), q: str = Query(None)):
-    filters = Filters(platform, sentiment, start_date, end_date, q)
+    filters = Filters(platform, sentiment, start_date, end_date, q, region)
     conn = get_db()
     if not table_exists(conn, "comments"):
         conn.close()
@@ -231,9 +245,9 @@ def api_summary(platform: str = Query(None), sentiment: str = Query(None),
 # ---------------------------------------------------------------------------
 
 @app.get("/api/timeline")
-def api_timeline(platform: str = Query(None), sentiment: str = Query(None),
+def api_timeline(platform: str = Query(None), sentiment: str = Query(None), region: str = Query(None),
                   start_date: str = Query(None), end_date: str = Query(None), q: str = Query(None)):
-    filters = Filters(platform, sentiment, start_date, end_date, q)
+    filters = Filters(platform, sentiment, start_date, end_date, q, region)
     conn = get_db()
 
     periods = month_range(
@@ -286,9 +300,9 @@ def api_events():
 # ---------------------------------------------------------------------------
 
 @app.get("/api/by-platform")
-def api_by_platform(platform: str = Query(None), sentiment: str = Query(None),
+def api_by_platform(platform: str = Query(None), sentiment: str = Query(None), region: str = Query(None),
                      start_date: str = Query(None), end_date: str = Query(None), q: str = Query(None)):
-    filters = Filters(platform, sentiment, start_date, end_date, q)
+    filters = Filters(platform, sentiment, start_date, end_date, q, region)
     conn = get_db()
 
     result = {p: {"positive": 0, "negative": 0, "neutral": 0} for p in VALID_PLATFORMS}
@@ -323,13 +337,121 @@ def api_by_platform(platform: str = Query(None), sentiment: str = Query(None),
 
 
 # ---------------------------------------------------------------------------
+# API: sentiment by region (nepal / india / unknown)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/by-region")
+def api_by_region(platform: str = Query(None), sentiment: str = Query(None), region: str = Query(None),
+                   start_date: str = Query(None), end_date: str = Query(None), q: str = Query(None)):
+    filters = Filters(platform, sentiment, start_date, end_date, q, region)
+    conn = get_db()
+
+    result = {r: {"positive": 0, "negative": 0, "neutral": 0} for r in VALID_REGIONS}
+    if table_exists(conn, "comments"):
+        where_sql, params = filters.where_clause()
+        rows = conn.execute(
+            f"""
+            SELECT region, final_label, COUNT(*) as cnt
+            FROM comments WHERE {where_sql}
+            GROUP BY region, final_label
+            """,
+            params,
+        ).fetchall()
+        for r in rows:
+            key = r["region"] if r["region"] in result else "unknown"
+            if r["final_label"] in result[key]:
+                result[key][r["final_label"]] += r["cnt"]
+    conn.close()
+
+    regions_out = []
+    for reg in VALID_REGIONS:
+        counts = result[reg]
+        total = sum(counts.values())
+        percentages = {k: round((v / total) * 100, 1) if total else 0.0 for k, v in counts.items()}
+        regions_out.append({
+            "region": reg,
+            "total": total,
+            "counts": counts,
+            "percentages": percentages,
+        })
+
+    return {
+        "regions": regions_out,
+        "note": (
+            "region is a best-effort signal (see DATA_SOURCES.md's Region "
+            "Heuristic section) -- on real collected data expect 'unknown' "
+            "to dominate; only the sample dataset has region populated on "
+            "every row."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# API: Nepal vs. India sentiment around specific events (CONTEXT.md's
+# central open question: does Nepal-sourced sentiment differ from
+# India-sourced sentiment, particularly around the Nepal price hike/quality
+# fine vs. the India expansion push?)
+# ---------------------------------------------------------------------------
+
+REGION_COMPARISON_WINDOW_DAYS = 30
+
+
+@app.get("/api/region-comparison")
+def api_region_comparison():
+    conn = get_db()
+    if not table_exists(conn, "comments"):
+        conn.close()
+        return {"window_days": REGION_COMPARISON_WINDOW_DAYS, "events": []}
+
+    events_out = []
+    for event in KNOWN_EVENTS:
+        event_date = date.fromisoformat(event["date"])
+        window_start = (event_date - timedelta(days=REGION_COMPARISON_WINDOW_DAYS)).isoformat()
+        window_end = (event_date + timedelta(days=REGION_COMPARISON_WINDOW_DAYS)).isoformat()
+
+        regions = {}
+        for reg in ("nepal", "india"):
+            rows = conn.execute(
+                """
+                SELECT final_label, COUNT(*) as cnt FROM comments
+                WHERE exclusion_reason IS NULL AND region = ?
+                  AND timestamp >= ? AND timestamp <= ?
+                GROUP BY final_label
+                """,
+                (reg, window_start, f"{window_end}T23:59:59"),
+            ).fetchall()
+            counts = {"positive": 0, "negative": 0, "neutral": 0}
+            for r in rows:
+                if r["final_label"] in counts:
+                    counts[r["final_label"]] = r["cnt"]
+            total = sum(counts.values())
+            regions[reg] = {
+                "total": total,
+                "counts": counts,
+                "negative_pct": round((counts["negative"] / total) * 100, 1) if total else None,
+            }
+
+        events_out.append({
+            "event_id": event["id"],
+            "date": event["date"],
+            "label": event["label"],
+            "category": event["category"],
+            "window_days": REGION_COMPARISON_WINDOW_DAYS,
+            "regions": regions,
+        })
+
+    conn.close()
+    return {"window_days": REGION_COMPARISON_WINDOW_DAYS, "events": events_out}
+
+
+# ---------------------------------------------------------------------------
 # API: theme frequency by sentiment
 # ---------------------------------------------------------------------------
 
 @app.get("/api/themes")
-def api_themes(platform: str = Query(None), sentiment: str = Query(None),
+def api_themes(platform: str = Query(None), sentiment: str = Query(None), region: str = Query(None),
                 start_date: str = Query(None), end_date: str = Query(None), q: str = Query(None)):
-    filters = Filters(platform, sentiment, start_date, end_date, q)
+    filters = Filters(platform, sentiment, start_date, end_date, q, region)
     conn = get_db()
 
     theme_counts = {}
@@ -386,10 +508,10 @@ def api_wordcloud():
 # ---------------------------------------------------------------------------
 
 @app.get("/api/comments")
-def api_comments(platform: str = Query(None), sentiment: str = Query(None),
+def api_comments(platform: str = Query(None), sentiment: str = Query(None), region: str = Query(None),
                   start_date: str = Query(None), end_date: str = Query(None), q: str = Query(None),
                   page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=200)):
-    filters = Filters(platform, sentiment, start_date, end_date, q)
+    filters = Filters(platform, sentiment, start_date, end_date, q, region)
     conn = get_db()
 
     if not table_exists(conn, "comments"):
@@ -403,7 +525,7 @@ def api_comments(platform: str = Query(None), sentiment: str = Query(None),
 
     rows = conn.execute(
         f"""
-        SELECT id, platform, text_raw, text_clean, timestamp, source_ref,
+        SELECT id, platform, region, text_raw, text_clean, timestamp, source_ref,
                engagement, language_guess, final_label, label_source,
                vader_compound, transformer_label, themes
         FROM comments
@@ -424,6 +546,7 @@ def api_comments(platform: str = Query(None), sentiment: str = Query(None),
         comments.append({
             "id": r["id"],
             "platform": r["platform"],
+            "region": r["region"],
             "text_raw": r["text_raw"],
             "text_clean": r["text_clean"],
             "timestamp": r["timestamp"],

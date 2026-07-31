@@ -346,6 +346,7 @@ tbody tr:hover {
 
 .col-date { white-space: nowrap; width: 92px; }
 .col-platform { white-space: nowrap; width: 90px; text-transform: capitalize; }
+.col-region { white-space: nowrap; width: 80px; text-transform: capitalize; color: var(--color-text-muted); }
 .col-sentiment { white-space: nowrap; width: 90px; }
 .col-themes { width: 160px; }
 .col-engagement { width: 70px; text-align: right; }

@@ -29,6 +29,7 @@
   const state = {
     platforms: new Set(["youtube", "twitter", "facebook"]),
     sentiments: new Set(["positive", "negative", "neutral"]),
+    regions: new Set(["nepal", "india", "unknown"]),
     startDate: null,
     endDate: null,
     q: "",
@@ -36,13 +37,14 @@
     pageSize: 25,
   };
 
-  let charts = { timeline: null, theme: null, byPlatform: {} };
+  let charts = { timeline: null, theme: null, byPlatform: {}, byRegion: {} };
   let latestTimelineEvents = [];
 
   function buildParams(extra) {
     const p = new URLSearchParams();
     p.set("platform", Array.from(state.platforms).join(","));
     p.set("sentiment", Array.from(state.sentiments).join(","));
+    p.set("region", Array.from(state.regions).join(","));
     if (state.startDate) p.set("start_date", state.startDate);
     if (state.endDate) p.set("end_date", state.endDate);
     if (state.q) p.set("q", state.q);
@@ -72,6 +74,13 @@
     document.querySelectorAll(".filter-sentiment").forEach((el) => {
       el.addEventListener("change", () => {
         syncSetFromCheckboxes(".filter-sentiment", state.sentiments);
+        state.page = 1;
+        refreshAll();
+      });
+    });
+    document.querySelectorAll(".filter-region").forEach((el) => {
+      el.addEventListener("change", () => {
+        syncSetFromCheckboxes(".filter-region", state.regions);
         state.page = 1;
         refreshAll();
       });
@@ -112,9 +121,11 @@
     document.getElementById("clear-filters").addEventListener("click", () => {
       document.querySelectorAll(".filter-platform").forEach((el) => (el.checked = true));
       document.querySelectorAll(".filter-sentiment").forEach((el) => (el.checked = true));
+      document.querySelectorAll(".filter-region").forEach((el) => (el.checked = true));
       document.getElementById("keyword-search").value = "";
       state.platforms = new Set(["youtube", "twitter", "facebook"]);
       state.sentiments = new Set(["positive", "negative", "neutral"]);
+      state.regions = new Set(["nepal", "india", "unknown"]);
       state.q = "";
       document.getElementById("reset-range").click();
     });
@@ -140,6 +151,7 @@
       state.startDate = meta.min_date;
       state.endDate = meta.max_date;
       refreshAll();
+      refreshRegionComparison(); // unfiltered/static, so only needs loading once
     });
   }
 
@@ -153,9 +165,14 @@
   // --------------------------------------------------------- data refresh
 
   function refreshAll() {
-    Promise.all([refreshSummary(), refreshTimeline(), refreshByPlatform(), refreshThemes(), refreshComments()]).catch(
-      (err) => console.error("Dashboard refresh failed:", err)
-    );
+    Promise.all([
+      refreshSummary(),
+      refreshTimeline(),
+      refreshByPlatform(),
+      refreshByRegion(),
+      refreshThemes(),
+      refreshComments(),
+    ]).catch((err) => console.error("Dashboard refresh failed:", err));
   }
 
   function refreshSummary() {
@@ -279,24 +296,32 @@
     return fetchJSON(`/api/by-platform?${buildParams()}`).then((data) => {
       data.platforms.forEach((p) => {
         document.getElementById(`n-${p.platform}`).textContent = `n=${p.total.toLocaleString()}`;
-        renderPlatformDonut(p.platform, p.counts);
+        renderDonut(charts.byPlatform, p.platform, `chart-platform-${p.platform}`, p.counts);
       });
     });
   }
 
-  function renderPlatformDonut(platform, counts) {
-    const elId = `chart-platform-${platform}`;
+  function refreshByRegion() {
+    return fetchJSON(`/api/by-region?${buildParams()}`).then((data) => {
+      data.regions.forEach((r) => {
+        document.getElementById(`n-region-${r.region}`).textContent = `n=${r.total.toLocaleString()}`;
+        renderDonut(charts.byRegion, r.region, `chart-region-${r.region}`, r.counts);
+      });
+    });
+  }
+
+  function renderDonut(store, key, elId, counts) {
     const el = document.getElementById(elId);
     if (!el) return;
     const data = [counts.positive, counts.negative, counts.neutral];
 
-    if (charts.byPlatform[platform]) {
-      charts.byPlatform[platform].data.datasets[0].data = data;
-      charts.byPlatform[platform].update();
+    if (store[key]) {
+      store[key].data.datasets[0].data = data;
+      store[key].update();
       return;
     }
 
-    charts.byPlatform[platform] = new Chart(el.getContext("2d"), {
+    store[key] = new Chart(el.getContext("2d"), {
       type: "doughnut",
       data: {
         labels: ["Positive", "Negative", "Neutral"],
@@ -311,6 +336,27 @@
           tooltip: { backgroundColor: COLORS.text, titleColor: "#F6F1E9", bodyColor: "#F6F1E9" },
         },
       },
+    });
+  }
+
+  function refreshRegionComparison() {
+    return fetchJSON("/api/region-comparison").then((data) => {
+      const tbody = document.getElementById("region-comparison-tbody");
+      tbody.innerHTML = "";
+      data.events.forEach((evt) => {
+        const nepal = evt.regions.nepal;
+        const india = evt.regions.india;
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${escapeHTML(evt.label)}</td>
+          <td class="col-date">${evt.date}</td>
+          <td class="col-engagement">${nepal.total}</td>
+          <td class="col-engagement">${nepal.negative_pct !== null ? nepal.negative_pct + "%" : "—"}</td>
+          <td class="col-engagement">${india.total}</td>
+          <td class="col-engagement">${india.negative_pct !== null ? india.negative_pct + "%" : "—"}</td>
+        `;
+        tbody.appendChild(tr);
+      });
     });
   }
 
@@ -380,6 +426,7 @@
           tr.innerHTML = `
             <td class="col-date">${date}</td>
             <td class="col-platform">${escapeHTML(c.platform)}</td>
+            <td class="col-region">${escapeHTML(c.region || "unknown")}</td>
             <td class="col-sentiment"><span class="sentiment-label sentiment-${c.final_label}">${escapeHTML(c.final_label || "")}</span></td>
             <td class="col-themes">${themeTags}</td>
             <td class="col-text comment-text" title="${escapeHTML(c.text_raw)}">${escapeHTML(c.text_raw)}</td>

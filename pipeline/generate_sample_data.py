@@ -185,22 +185,40 @@ GENERAL_NEUTRAL = [
 # praise slightly outweighing complaints day-to-day) so that the negative
 # spikes clustered around known events (see event_allocation below) read as
 # genuine dips rather than the whole dataset being uniformly negative.
+# region_weights = (p_nepal, p_india, p_unknown), summing to 1.0. Reflects
+# CONTEXT.md's framing: Wai Wai is the declining-at-home / growing-abroad
+# brand, with Nepal being the smaller home base and India (particularly
+# North East India, ~80% share there) the larger, growing volume source.
+# Banks with explicit geographic content (India-expansion praise, North
+# East availability mentions, Nepali-government-agency quality/legal
+# content) are weighted accordingly rather than left uniform.
+NEPAL_LEANING = (0.55, 0.20, 0.25)
+INDIA_LEANING = (0.15, 0.65, 0.20)
+STRONG_NEPAL = (0.75, 0.10, 0.15)
+STRONG_INDIA = (0.05, 0.85, 0.10)
+MIXED = (0.30, 0.40, 0.30)
+THIRD_MARKET = (0.05, 0.05, 0.90)  # Thailand-operations content: neither Nepal nor India
+
 THEME_BANKS = [
-    (PRICE_COMPLAINTS, "price", "negative", 1.0),
-    (THAILAND_PRICE_COMPLAINTS, "price", "negative", 0.5),
-    (QUALITY_COMPLAINTS, "quality", "negative", 0.6),
-    (SPICE_COMPLAINTS, "spice", "negative", 0.8),
-    (PACKAGING_COMPLAINTS, "packaging", "negative", 0.6),
-    (AVAILABILITY_COMPLAINTS, "availability", "negative", 0.6),
-    (COMPETITOR_COMPARISON, "competitor", "neutral", 1.0),
-    (TRADEMARK_CHATTER, "legal", "neutral", 0.5),
-    (TASTE_PRAISE, "taste", "positive", 1.6),
-    (NOSTALGIA_PRAISE, "nostalgia", "positive", 1.6),
-    (AVAILABILITY_PRAISE, "availability", "positive", 1.0),
-    (INDIA_EXPANSION_POSITIVE, "availability", "positive", 1.2),
-    (GENERAL_NEUTRAL, "general", "neutral", 0.8),
+    (PRICE_COMPLAINTS, "price", "negative", NEPAL_LEANING, 1.0),
+    (THAILAND_PRICE_COMPLAINTS, "price", "negative", THIRD_MARKET, 0.5),
+    (QUALITY_COMPLAINTS, "quality", "negative", NEPAL_LEANING, 0.6),
+    (SPICE_COMPLAINTS, "spice", "negative", MIXED, 0.8),
+    (PACKAGING_COMPLAINTS, "packaging", "negative", MIXED, 0.6),
+    (AVAILABILITY_COMPLAINTS, "availability", "negative", INDIA_LEANING, 0.6),
+    (COMPETITOR_COMPARISON, "competitor", "neutral", NEPAL_LEANING, 1.0),
+    (TRADEMARK_CHATTER, "legal", "neutral", NEPAL_LEANING, 0.5),
+    (TASTE_PRAISE, "taste", "positive", MIXED, 1.6),
+    (NOSTALGIA_PRAISE, "nostalgia", "positive", MIXED, 1.6),
+    (AVAILABILITY_PRAISE, "availability", "positive", INDIA_LEANING, 1.0),
+    (INDIA_EXPANSION_POSITIVE, "availability", "positive", STRONG_INDIA, 1.2),
+    (GENERAL_NEUTRAL, "general", "neutral", MIXED, 0.8),
 ]
 THEME_BANK_WEIGHTS = [w for *_rest, w in THEME_BANKS]
+
+
+def pick_region(rng: random.Random, region_weights: tuple) -> str:
+    return rng.choices(["nepal", "india", "unknown"], weights=region_weights, k=1)[0]
 
 # Spam / low-value templates for pipeline/clean.py to filter out. Kept out
 # of THEME_BANKS so they never get tagged with a "real" theme/sentiment.
@@ -350,20 +368,24 @@ def build_rows(rng: random.Random) -> list:
     authors = author_pool(rng, 140)
 
     # --- Event-clustered rows ---------------------------------------------
-    # (count, pool, spread_days, gold_sentiment) - gold_sentiment is the
-    # dominant intended tone of the pool, used only as a synthetic gold-label
-    # proxy (see module docstring).
+    # (count, pool, spread_days, gold_sentiment, region_weights) -
+    # gold_sentiment is the dominant intended tone of the pool, used only
+    # as a synthetic gold-label proxy (see module docstring). region_weights
+    # reflects which market each event is actually about: the Nepal price
+    # hike/quality fine/trademark case are Nepal-government/Nepal-court
+    # events; the India expansion push is explicitly India-side; the
+    # Thailand price hike is neither.
     event_allocation = {
-        "price_hike_nepal_2024": (26, PRICE_COMPLAINTS + COMPETITOR_COMPARISON[:3], 25, "negative"),
-        "quality_fine_2024": (32, QUALITY_COMPLAINTS, 20, "negative"),
-        "trademark_ruling_2025": (18, TRADEMARK_CHATTER, 18, "neutral"),
-        "thailand_price_hike_2025": (18, THAILAND_PRICE_COMPLAINTS + PRICE_COMPLAINTS[:4], 20, "negative"),
-        "competitor_surge_2025": (24, COMPETITOR_COMPARISON, 30, "neutral"),
-        "india_expansion_2026": (28, INDIA_EXPANSION_POSITIVE + AVAILABILITY_PRAISE[:2], 35, "positive"),
+        "price_hike_nepal_2024": (26, PRICE_COMPLAINTS + COMPETITOR_COMPARISON[:3], 25, "negative", STRONG_NEPAL),
+        "quality_fine_2024": (32, QUALITY_COMPLAINTS, 20, "negative", STRONG_NEPAL),
+        "trademark_ruling_2025": (18, TRADEMARK_CHATTER, 18, "neutral", STRONG_NEPAL),
+        "thailand_price_hike_2025": (18, THAILAND_PRICE_COMPLAINTS + PRICE_COMPLAINTS[:4], 20, "negative", THIRD_MARKET),
+        "competitor_surge_2025": (24, COMPETITOR_COMPARISON, 30, "neutral", NEPAL_LEANING),
+        "india_expansion_2026": (28, INDIA_EXPANSION_POSITIVE + AVAILABILITY_PRAISE[:2], 35, "positive", STRONG_INDIA),
     }
     events_by_id = {e["id"]: e for e in KNOWN_EVENTS}
 
-    for event_id, (count, pool, spread, gold_sentiment) in event_allocation.items():
+    for event_id, (count, pool, spread, gold_sentiment, region_weights) in event_allocation.items():
         event = events_by_id[event_id]
         for _ in range(count):
             text = rng.choice(pool)
@@ -377,12 +399,15 @@ def build_rows(rng: random.Random) -> list:
                 "platform": platform,
                 "author_id": rng.choice(authors),
                 "gold_sentiment": gold_sentiment,
+                "region": pick_region(rng, region_weights),
             })
 
     # --- Steady-state background rows --------------------------------------
     n_background = N_ROWS - len(rows) - len(SPAM_TEMPLATES) - 6  # reserve spam + dup slots
     for _ in range(n_background):
-        bank, _theme, gold_sentiment, _weight = rng.choices(THEME_BANKS, weights=THEME_BANK_WEIGHTS, k=1)[0]
+        bank, _theme, gold_sentiment, region_weights, _weight = rng.choices(
+            THEME_BANKS, weights=THEME_BANK_WEIGHTS, k=1
+        )[0]
         text = rng.choice(bank)
         text = vary_template(rng, text)
         text = maybe_add_clutter(rng, text)
@@ -394,6 +419,7 @@ def build_rows(rng: random.Random) -> list:
             "platform": platform,
             "author_id": rng.choice(authors),
             "gold_sentiment": gold_sentiment,
+            "region": pick_region(rng, region_weights),
         })
 
     # --- Spam rows (for clean.py's spam filter) -----------------------------
@@ -407,6 +433,7 @@ def build_rows(rng: random.Random) -> list:
             "platform": platform,
             "author_id": spam_author,
             "gold_sentiment": "",
+            "region": "unknown",
         })
 
     # --- Exact-duplicate rows (near-duplicate / copy-pasted spam for dedup) -
@@ -421,6 +448,7 @@ def build_rows(rng: random.Random) -> list:
             "platform": platform,
             "author_id": dup_author,
             "gold_sentiment": "positive",
+            "region": pick_region(rng, MIXED),
         })
 
     rng.shuffle(rows)
@@ -436,7 +464,7 @@ def main():
         writer = csv.writer(f)
         writer.writerow([
             "id", "platform", "text_raw", "timestamp", "source_ref",
-            "engagement", "language_guess", "author_id", "gold_sentiment",
+            "engagement", "language_guess", "author_id", "gold_sentiment", "region",
         ])
         for i, row in enumerate(rows):
             platform = row["platform"]
@@ -451,6 +479,7 @@ def main():
                 "",  # language_guess populated during cleaning
                 row["author_id"],
                 row["gold_sentiment"],
+                row["region"],
             ])
 
     print(f"Wrote {len(rows)} synthetic rows to {OUT_PATH}")
