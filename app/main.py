@@ -9,15 +9,23 @@ Run with: uvicorn app.main:app --reload
 """
 
 import json
+import os
 import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+from app.chat import run_chat
 from pipeline.analyze import COMPETITOR_DISPLAY_NAMES, COMPETITOR_TAGS
 from pipeline.db import DB_PATH
 from pipeline.event_analysis import SIGNIFICANCE_ALPHA, WINDOW_DAYS, analyze_event
@@ -29,6 +37,22 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 
 app = FastAPI(title="Wai Wai / CG Foods Sentiment Tracker")
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
+
+_test_client = None
+
+
+def get_internal_client():
+    """A FastAPI TestClient bound to this same app, used by the chatbot
+    (app/chat.py) to call /api/* endpoints in-process. This guarantees the
+    chatbot's numbers come from the identical aggregation code the
+    dashboard's own fetch() calls hit -- not a second, divergent query
+    path. Built lazily so importing this module doesn't require httpx to
+    already be configured at import time."""
+    global _test_client
+    if _test_client is None:
+        from fastapi.testclient import TestClient
+        _test_client = TestClient(app)
+    return _test_client
 
 VALID_PLATFORMS = ["youtube", "twitter", "facebook"]
 VALID_SENTIMENTS = ["positive", "negative", "neutral"]
@@ -759,3 +783,59 @@ def api_report():
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=waiwai_sentiment_report.pdf"},
     )
+
+
+# ---------------------------------------------------------------------------
+# API: text-to-query chatbot (step 10)
+#
+# Translates a natural-language question into calls against the *existing*
+# /api/* endpoints above (via an in-process TestClient) rather than raw SQL
+# or a RAG/embedding pass over comment text -- see app/chat.py's docstring.
+# ---------------------------------------------------------------------------
+
+@app.post("/api/chat")
+def api_chat(payload: dict = Body(...)):
+    question = (payload or {}).get("question", "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Missing 'question' in request body.")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY is not set. Add it to .env to enable the chat assistant (see .env.example).",
+        )
+
+    try:
+        import anthropic
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="The 'anthropic' package is not installed -- pip install -r requirements.txt.",
+        )
+
+    conn = get_db()
+    if not table_exists(conn, "comments"):
+        conn.close()
+        raise HTTPException(status_code=409, detail="No data yet -- run the pipeline first.")
+
+    anthropic_client = anthropic.Anthropic(api_key=api_key)
+    test_client = get_internal_client()
+
+    try:
+        result = run_chat(test_client, anthropic_client, conn, question)
+    except anthropic.AuthenticationError:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY was rejected by the Anthropic API (invalid or revoked key).",
+        )
+    except anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="Anthropic API rate limit hit -- try again shortly.")
+    except anthropic.APIConnectionError:
+        raise HTTPException(status_code=503, detail="Could not reach the Anthropic API (network error).")
+    except anthropic.APIStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Anthropic API error: {exc.message}")
+    finally:
+        conn.close()
+
+    return result

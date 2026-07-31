@@ -19,6 +19,9 @@ uvicorn[standard]==0.39.0
 jinja2==3.1.6
 python-multipart==0.0.20
 
+# Text-to-query chatbot (step 10) -- requires ANTHROPIC_API_KEY in .env
+anthropic==0.120.2
+
 # Testing
 pytest==8.4.2
 httpx==0.28.1

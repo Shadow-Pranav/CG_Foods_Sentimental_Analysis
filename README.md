@@ -228,6 +228,7 @@ nothing" (e.g. every checkbox unchecked).
 - `GET /api/wordcloud` -- top term-frequency data per sentiment class (`pipeline/analyze.py`'s precomputed artifact, not filter-aware). Rendered on the dashboard as three ranked horizontal-bar "top terms" charts (a Chart.js-consistent alternative to a true word cloud, per the no-extra-libraries constraint) rather than as a literal word cloud.
 - `GET /api/comments` -- paginated comment table (`page`, `page_size` params too).
 - `GET /api/report` -- downloads a PDF snapshot of the full (unfiltered) dataset: overall split, by-platform, by-region, events with statistical significance, theme frequency, competitor mentions, and an auto-generated narrative summary computed from the actual numbers. See "Report export" below.
+- `POST /api/chat` -- natural-language question in, answer + the structured API data behind it out. Implemented as Claude tool-calling over the endpoints above (not free-text search, not a second RAG/embedding system) -- see "Chat assistant" below.
 
 ### Engagement-weighted sentiment
 
@@ -259,6 +260,49 @@ theme-frequency bar chart split by sentiment, a named-competitor mentions
 chart, three ranked "top terms" bar charts (one per sentiment class), and
 a paginated comment table.
 
+## Chat assistant
+
+`POST /api/chat` (dashboard: the "Ask the data" panel at the bottom) lets
+you ask a question in plain English -- e.g. "Which platform is most
+negative?" or "Was the KMC fine statistically significant?" -- and get
+back a natural-language answer plus the structured data behind it.
+
+It's built as Claude tool-calling over the *existing* `/api/*` endpoints,
+not a second retrieval system:
+
+- The model (`claude-opus-5`) is given 8 tools, one per read endpoint
+  (`summary`, `timeline`, `by_platform`, `by_region`, `themes`,
+  `competitors`, `comments`, `events`) with the same filter parameters
+  described above. Each tool call runs through FastAPI's `TestClient`
+  against the real, running app -- so a chatbot answer is computed by the
+  exact same SQL/aggregation code as the charts, never a separate
+  implementation that could silently disagree with the dashboard.
+- There is deliberately no free-text/vector search over raw comment text
+  as a chatbot mechanism. Every number the model cites has to come from
+  calling one of the endpoints above, so "how many negative comments on
+  YouTube in Nepal" is answered by the same `by_region`/`summary` logic
+  a human would get from the sidebar filters, not by the model guessing
+  from retrieved snippets.
+- The system prompt is built fresh per request from
+  `build_label_source_context()` (`app/chat.py`), which reports the
+  current `label_source` mix in the database (VADER vs. transformer vs.
+  human-corrected, from `pipeline/classify.py`/`pipeline/evaluate.py`).
+  This keeps the model from citing VADER-only numbers as if they were the
+  transformer-validated or human-gold-checked results from steps 1-2.
+- The tool-call loop is capped at 4 round-trips
+  (`MAX_TOOL_ITERATIONS` in `app/chat.py`); if the model hasn't reached a
+  final answer by then, it's forced to answer (or say it couldn't) with
+  whatever it already retrieved rather than looping indefinitely.
+- Requires `ANTHROPIC_API_KEY` in `.env` (see `.env.example`). Without it,
+  `/api/chat` returns a clean `503` explaining what's missing instead of
+  crashing -- the rest of the app works fine with no key configured.
+
+```bash
+curl -s http://127.0.0.1:8000/api/chat \
+  -H "content-type: application/json" \
+  -d '{"question": "Which platform is most negative?"}'
+```
+
 ## Running tests
 
 ```bash
@@ -273,10 +317,16 @@ sentiment math (`compute_engagement_weighted`, including the log-transform
 outlier test and the zero-engagement/negative-engagement edge cases);
 event significance testing (`analyze_event`'s chi-square/Fisher's-exact
 selection, the +inf-odds-ratio JSON-serialization fix, insufficient-data
-handling); and `app/main.py`'s API filter combinations (platform +
+handling); `app/main.py`'s API filter combinations (platform +
 sentiment + region + date + keyword search together, empty-param-means-
 nothing vs. omitted-param-means-no-filter, pagination, ordering, and
-`exclusion_reason` never leaking through regardless of filters).
+`exclusion_reason` never leaking through regardless of filters); and
+`app/chat.py`'s tool-calling loop (`tests/test_chat.py`, with a scripted
+mock standing in for the Anthropic client) -- tool-call routing through
+the real `/api/*` endpoint code, the `MAX_TOOL_ITERATIONS` cap forcing a
+final no-tools answer, refusal short-circuiting, empty-filter-value
+handling, and the label-source provenance text that gets injected into
+the system prompt.
 
 The API tests use FastAPI's `TestClient` against a temp SQLite file seeded
 with known rows per test (see `tests/conftest.py`) -- they don't touch
@@ -307,3 +357,11 @@ dataset.
   event/theme context) but would skew heavily toward `unknown` on real
   collected data, since none of YouTube/X/Facebook's public APIs reliably
   expose a commenter's actual location.
+- The chat assistant (`/api/chat`) has been tested against the real
+  backend/tool-execution path with a mocked Anthropic client (tool-use
+  loop, iteration-cap enforcement, refusal handling -- see
+  `tests/test_chat.py`) and against the real API with no key configured
+  (clean 503). It has **not** been tested end-to-end against the live
+  Anthropic API in this environment, since doing so would require
+  spending the user's own API credits without asking first -- verify
+  this path with your own `ANTHROPIC_API_KEY` before relying on it.

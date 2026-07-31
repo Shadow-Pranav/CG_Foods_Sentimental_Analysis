@@ -543,5 +543,110 @@
     });
   }
 
-  document.addEventListener("DOMContentLoaded", init);
+  // ------------------------------------------------------------------ chat
+
+  let chatMessageCounter = 0;
+
+  function initChat() {
+    const form = document.getElementById("chat-form");
+    if (!form) return;
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const input = document.getElementById("chat-input");
+      const question = input.value.trim();
+      if (!question) return;
+
+      appendChatMessage("user", question);
+      input.value = "";
+      input.disabled = true;
+      const pendingId = appendChatMessage("assistant", "Thinking...");
+
+      fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      })
+        .then((r) => r.json().then((data) => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => renderChatResponse(pendingId, ok, data))
+        .catch(() => renderChatResponse(pendingId, false, { detail: "Network error reaching /api/chat." }))
+        .finally(() => {
+          input.disabled = false;
+          input.focus();
+        });
+    });
+  }
+
+  function renderChatResponse(messageId, ok, data) {
+    const el = document.getElementById(messageId);
+    if (!el) return;
+    const textEl = el.querySelector(".chat-text");
+
+    if (!ok) {
+      textEl.textContent = data.detail || "Something went wrong.";
+      el.classList.add("chat-error");
+      return;
+    }
+
+    textEl.textContent = data.answer || "(no answer returned)";
+    if (data.tool_calls && data.tool_calls.length) {
+      const wrap = document.createElement("div");
+      wrap.className = "chat-tool-calls";
+      data.tool_calls.forEach((tc) => {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = `${tc.tool}(${JSON.stringify(tc.input)})`;
+        details.appendChild(summary);
+        details.insertAdjacentHTML("beforeend", renderToolOutputTable(tc.output));
+        wrap.appendChild(details);
+      });
+      el.appendChild(wrap);
+    }
+    document.getElementById("chat-messages").scrollTop = document.getElementById("chat-messages").scrollHeight;
+  }
+
+  function renderToolOutputTable(output) {
+    if (!output || typeof output !== "object") return "";
+
+    const arrayKey = Object.keys(output).find(
+      (k) => Array.isArray(output[k]) && output[k].length && typeof output[k][0] === "object"
+    );
+
+    if (!arrayKey) {
+      const rows = Object.entries(output).filter(([, v]) => typeof v !== "object" || v === null);
+      if (!rows.length) return "";
+      const body = rows
+        .map(([k, v]) => `<tr><td>${escapeHTML(k)}</td><td>${escapeHTML(String(v))}</td></tr>`)
+        .join("");
+      return `<table class="chat-tool-table"><tbody>${body}</tbody></table>`;
+    }
+
+    const items = output[arrayKey].slice(0, 8);
+    const cols = Object.keys(items[0]).filter((c) => typeof items[0][c] !== "object");
+    const header = `<tr>${cols.map((c) => `<th>${escapeHTML(c)}</th>`).join("")}</tr>`;
+    const body = items
+      .map((row) => `<tr>${cols.map((c) => `<td>${escapeHTML(String(row[c] ?? ""))}</td>`).join("")}</tr>`)
+      .join("");
+    return `<table class="chat-tool-table"><thead>${header}</thead><tbody>${body}</tbody></table>`;
+  }
+
+  function appendChatMessage(role, text) {
+    const container = document.getElementById("chat-messages");
+    const placeholder = container.querySelector(".chat-placeholder");
+    if (placeholder) placeholder.remove();
+
+    const id = `chat-msg-${chatMessageCounter++}`;
+    const div = document.createElement("div");
+    div.id = id;
+    div.className = `chat-message chat-message-${role}`;
+    div.innerHTML = `<span class="chat-role">${role === "user" ? "You" : "Assistant"}</span><span class="chat-text">${escapeHTML(text)}</span>`;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    return id;
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    init();
+    initChat();
+  });
 })();

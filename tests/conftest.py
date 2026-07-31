@@ -93,6 +93,7 @@ def api_client(tmp_path, monkeypatch):
 
     db_path = tmp_path / "test_sentiment.db"
     setup_conn = sqlite3.connect(db_path)
+    setup_conn.row_factory = sqlite3.Row  # matches app.main.get_db()'s real connections
     init_schema(setup_conn)
 
     monkeypatch.setattr(main_module, "DB_PATH", db_path)
