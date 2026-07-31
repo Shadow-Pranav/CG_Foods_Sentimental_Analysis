@@ -13,13 +13,16 @@ import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from pipeline.analyze import COMPETITOR_DISPLAY_NAMES, COMPETITOR_TAGS
 from pipeline.db import DB_PATH
 from pipeline.event_analysis import SIGNIFICANCE_ALPHA, WINDOW_DAYS, analyze_event
 from pipeline.events import KNOWN_EVENTS, WINDOW_START, WINDOW_END
+from pipeline.report import gather_report_data, generate_report_pdf
 
 APP_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
@@ -30,13 +33,6 @@ app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="stati
 VALID_PLATFORMS = ["youtube", "twitter", "facebook"]
 VALID_SENTIMENTS = ["positive", "negative", "neutral"]
 VALID_REGIONS = ["nepal", "india", "unknown"]
-COMPETITOR_TAGS = ["current_noodles", "2pm_noodles", "maggi", "yippee"]
-COMPETITOR_DISPLAY_NAMES = {
-    "current_noodles": "Current Noodles",
-    "2pm_noodles": "2PM Noodles",
-    "maggi": "Maggi",
-    "yippee": "Sunfeast Yippee!",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -735,3 +731,31 @@ def api_comments(platform: str = Query(None), sentiment: str = Query(None), regi
         "total_pages": total_pages,
         "comments": comments,
     }
+
+
+# ---------------------------------------------------------------------------
+# API: PDF report export (PROJECT_INSTRUCTIONS.md section 5 "Reporting")
+# ---------------------------------------------------------------------------
+
+@app.get("/api/report")
+def api_report():
+    """Always reports on the full, unfiltered dataset -- a report is a
+    fixed snapshot, not a filtered view (same reasoning as
+    /api/region-comparison and /api/event-analysis)."""
+    conn = get_db()
+    if not table_exists(conn, "comments"):
+        conn.close()
+        raise HTTPException(status_code=409, detail="No data yet -- run the pipeline first.")
+
+    data = gather_report_data(conn)
+    conn.close()
+
+    if not data["total"]:
+        raise HTTPException(status_code=409, detail="No classified comments yet -- run the pipeline first.")
+
+    pdf_bytes = generate_report_pdf(data)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=waiwai_sentiment_report.pdf"},
+    )

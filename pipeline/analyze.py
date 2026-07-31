@@ -84,6 +84,13 @@ COMPETITOR_KEYWORDS = {
     "maggi": ["maggi"],
     "yippee": ["yippee", "sunfeast yippee"],
 }
+COMPETITOR_TAGS = list(COMPETITOR_KEYWORDS.keys())
+COMPETITOR_DISPLAY_NAMES = {
+    "current_noodles": "Current Noodles",
+    "2pm_noodles": "2PM Noodles",
+    "maggi": "Maggi",
+    "yippee": "Sunfeast Yippee!",
+}
 
 STANDARD_STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for",

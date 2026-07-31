@@ -159,6 +159,24 @@ and would otherwise silently wipe hand-labeled data. `evaluate.py` re-joins
 it against the DB by comment `id` every time it runs, so it always reflects
 the current pipeline output.
 
+## Report export
+
+Per PROJECT_INSTRUCTIONS.md section 5 ("Reporting"), a downloadable PDF
+snapshot covering overall sentiment split, by-platform, by-region, events
+with statistical significance, theme frequency, and named-competitor
+mentions -- plus a short narrative summary auto-generated from the actual
+numbers (not boilerplate; re-running against different data changes the
+text).
+
+```bash
+python pipeline/report.py   # writes data/report.pdf
+```
+
+Also served live at `GET /api/report`, with a "Download PDF report" button
+in the dashboard's top bar. Always reports on the full, unfiltered
+dataset -- like `/api/region-comparison` and `/api/event-analysis`, a
+report is a fixed snapshot, not a filtered view.
+
 ## Statistical significance of event correlation
 
 A visual dip on the sentiment-over-time chart isn't proof the event caused
@@ -209,6 +227,7 @@ nothing" (e.g. every checkbox unchecked).
 - `GET /api/competitors` -- mention count and sentiment split per named competitor (Current Noodles, 2PM Noodles, Maggi, Sunfeast Yippee!), plus a monthly trend per competitor mirroring `/api/timeline`'s shape.
 - `GET /api/wordcloud` -- top term-frequency data per sentiment class (`pipeline/analyze.py`'s precomputed artifact, not filter-aware). Rendered on the dashboard as three ranked horizontal-bar "top terms" charts (a Chart.js-consistent alternative to a true word cloud, per the no-extra-libraries constraint) rather than as a literal word cloud.
 - `GET /api/comments` -- paginated comment table (`page`, `page_size` params too).
+- `GET /api/report` -- downloads a PDF snapshot of the full (unfiltered) dataset: overall split, by-platform, by-region, events with statistical significance, theme frequency, competitor mentions, and an auto-generated narrative summary computed from the actual numbers. See "Report export" below.
 
 ### Engagement-weighted sentiment
 

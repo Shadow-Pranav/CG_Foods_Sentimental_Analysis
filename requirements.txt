@@ -23,6 +23,9 @@ python-multipart==0.0.20
 pytest==8.4.2
 httpx==0.28.1
 
+# PDF report export (step 9 / PROJECT_INSTRUCTIONS.md section 5 "Reporting")
+reportlab==5.0.0
+
 # Optional: only needed for the real collection path (pipeline/collect.py)
 # once real API keys are configured in .env. Not required to run the app
 # on the bundled sample data.
