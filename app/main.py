@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from pipeline.db import DB_PATH
+from pipeline.event_analysis import SIGNIFICANCE_ALPHA, WINDOW_DAYS, analyze_event
 from pipeline.events import KNOWN_EVENTS, WINDOW_START, WINDOW_END
 
 APP_DIR = Path(__file__).resolve().parent
@@ -372,6 +373,27 @@ def api_timeline(platform: str = Query(None), sentiment: str = Query(None), regi
 @app.get("/api/events")
 def api_events():
     return {"events": KNOWN_EVENTS}
+
+
+# ---------------------------------------------------------------------------
+# API: statistical significance of event-driven sentiment shifts
+# ---------------------------------------------------------------------------
+
+@app.get("/api/event-analysis")
+def api_event_analysis():
+    """Live chi-square/Fisher's-exact test per event (pipeline/event_analysis.py's
+    logic, computed fresh rather than read from its output file so this
+    can't go stale relative to the current comments table). Unfiltered by
+    design -- it's answering a fixed statistical question about the whole
+    dataset, like /api/region-comparison."""
+    conn = get_db()
+    if not table_exists(conn, "comments"):
+        conn.close()
+        return {"window_days": WINDOW_DAYS, "alpha": SIGNIFICANCE_ALPHA, "events": []}
+
+    results = [analyze_event(conn, event) for event in KNOWN_EVENTS]
+    conn.close()
+    return {"window_days": WINDOW_DAYS, "alpha": SIGNIFICANCE_ALPHA, "events": results}
 
 
 # ---------------------------------------------------------------------------

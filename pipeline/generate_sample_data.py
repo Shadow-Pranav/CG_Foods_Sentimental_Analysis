@@ -263,12 +263,25 @@ def random_datetime_in_window(rng: random.Random, start: str, end: str) -> datet
 
 
 def clustered_datetime(rng: random.Random, event_date: str, spread_days: int,
-                        window_start: str, window_end: str) -> datetime:
+                        window_start: str, window_end: str, pre_event_fraction: float = 0.12) -> datetime:
+    """Reaction comments should mostly land AFTER the event, decaying over
+    the following weeks -- not spread symmetrically around it. A symmetric
+    spread was previously placing a large chunk of "reacting to the KMC
+    fine" comments before the fine happened, which has no narrative sense
+    and (more concretely) contaminates the pre-event baseline that
+    pipeline/event_analysis.py compares against, making a real post-event
+    shift statistically undetectable even when it's visually obvious on
+    the timeline. pre_event_fraction models a small amount of genuine
+    anticipatory chatter (e.g. rumors ahead of a price hike)."""
     base = datetime.fromisoformat(event_date)
     lo = datetime.fromisoformat(window_start)
     hi = datetime.fromisoformat(window_end)
-    # Triangular-ish spread via sum of two uniforms, biased around the event.
-    offset = (rng.uniform(-1, 1) + rng.uniform(-1, 1)) / 2 * spread_days
+
+    if rng.random() < pre_event_fraction:
+        offset = -min(rng.expovariate(1 / (spread_days * 0.3)), spread_days)
+    else:
+        offset = min(rng.expovariate(1 / (spread_days * 0.6)), spread_days * 2.5)
+
     dt = base + timedelta(days=offset, hours=rng.uniform(0, 24))
     if dt < lo:
         dt = lo + timedelta(hours=rng.uniform(0, 48))

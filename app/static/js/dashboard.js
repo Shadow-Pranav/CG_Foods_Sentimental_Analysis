@@ -39,6 +39,7 @@
 
   let charts = { timeline: null, theme: null, byPlatform: {}, byRegion: {} };
   let latestTimelineEvents = [];
+  let eventSignificance = {}; // event_id -> { significant, p_value }
 
   function buildParams(extra) {
     const p = new URLSearchParams();
@@ -152,6 +153,17 @@
       state.endDate = meta.max_date;
       refreshAll();
       refreshRegionComparison(); // unfiltered/static, so only needs loading once
+      refreshEventAnalysis(); // ditto
+    });
+  }
+
+  function refreshEventAnalysis() {
+    return fetchJSON("/api/event-analysis").then((data) => {
+      eventSignificance = {};
+      data.events.forEach((e) => {
+        eventSignificance[e.event_id] = { significant: e.significant, p_value: e.p_value };
+      });
+      if (charts.timeline) charts.timeline.update(); // redraw markers with badges now available
     });
   }
 
@@ -275,23 +287,29 @@
           x = x0;
         }
 
+        const sig = eventSignificance[evt.id];
+        const isSignificant = sig && sig.significant;
+
         const color = EVENT_LINE_COLOR[evt.category] || COLORS.gold;
         ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = isSignificant ? 1.75 : 1;
+        ctx.setLineDash(isSignificant ? [] : [3, 3]);
         ctx.beginPath();
         ctx.moveTo(x, chartArea.top);
         ctx.lineTo(x, chartArea.bottom);
         ctx.stroke();
         ctx.setLineDash([]);
 
+        const labelText = isSignificant ? `${evt.label} *` : evt.label;
         ctx.save();
         ctx.translate(x + 9, chartArea.top + 4);
         ctx.rotate(Math.PI / 2);
         ctx.fillStyle = color;
-        ctx.font = "10px 'Source Sans 3', sans-serif";
+        ctx.font = isSignificant
+          ? "bold 10px 'Source Sans 3', sans-serif"
+          : "10px 'Source Sans 3', sans-serif";
         ctx.textBaseline = "middle";
-        ctx.fillText(evt.label, 0, 0);
+        ctx.fillText(labelText, 0, 0);
         ctx.restore();
       });
       ctx.restore();

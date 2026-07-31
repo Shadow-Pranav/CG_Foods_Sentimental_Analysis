@@ -21,6 +21,7 @@ python pipeline/generate_sample_data.py   # writes data/raw_comments.csv (~320 s
 python pipeline/clean.py                  # dedupe/strip/langdetect/spam-filter -> data/sentiment.db
 python pipeline/classify.py               # VADER baseline + HuggingFace transformer validation pass
 python pipeline/analyze.py                # theme tagging + word-cloud term frequency
+python pipeline/event_analysis.py         # chi-square/Fisher's-exact significance per known event
 
 uvicorn app.main:app --reload
 ```
@@ -42,7 +43,7 @@ syntax, so it should run unmodified on 3.11 too.
 | 1. Collection | `pipeline/collect.py` (opt-in, real) / `pipeline/generate_sample_data.py` (synthetic, default) | Produces `data/raw_comments.csv` in the schema from `DATA_SOURCES.md` |
 | 2. Cleaning | `pipeline/clean.py` | Dedup (exact + near-dup), strip URLs/HTML/emoji, langdetect, spam heuristics. Writes to `data/sentiment.db` (`comments` table), keeping `text_raw` and excluded rows for auditability |
 | 3. Classification | `pipeline/classify.py` | VADER baseline on every kept row + a HuggingFace multilingual transformer (`cardiffnlp/twitter-xlm-roberta-base-sentiment`) on a sampled subset, per `METHODOLOGY.md`'s comparison protocol |
-| 4. Analysis | `pipeline/analyze.py` | Keyword/theme tagging from the `CONTEXT.md` seed dictionary + term-frequency word-cloud data per sentiment class |
+| 4. Analysis | `pipeline/analyze.py` + `pipeline/event_analysis.py` | Keyword/theme tagging from the `CONTEXT.md` seed dictionary + term-frequency word-cloud data per sentiment class; chi-square/Fisher's-exact significance testing of sentiment shifts around each known event |
 | 5. Reporting | `app/main.py` + `app/templates/dashboard.html` | FastAPI JSON API + a single dashboard page (Chart.js) |
 
 ### Why a synthetic dataset?
@@ -158,6 +159,34 @@ and would otherwise silently wipe hand-labeled data. `evaluate.py` re-joins
 it against the DB by comment `id` every time it runs, so it always reflects
 the current pipeline output.
 
+## Statistical significance of event correlation
+
+A visual dip on the sentiment-over-time chart isn't proof the event caused
+it -- it could be noise in a small dataset. `pipeline/event_analysis.py`
+tests this properly: for each event in `pipeline/events.py`, it compares
+the negative-sentiment share in a &plusmn;30-day window before vs. after
+the event date with a chi-square test of independence (or Fisher's exact
+test when an expected cell count is below 5, the standard threshold for
+chi-square validity on small samples).
+
+```bash
+python pipeline/event_analysis.py   # writes data/event_analysis.json
+```
+
+Also served live at `GET /api/event-analysis` (computed fresh from the
+current `comments` table, not read from that file, so it can't go stale).
+On the dashboard, the timeline's event markers are dashed by default;
+an event with a statistically significant shift (p&lt;0.05) gets a solid
+line and a trailing `*` on its label.
+
+On the bundled sample data, only one of the six events clears
+significance: the November 2024 KMC quality/health fine (33.3% &rarr;
+82.6% negative, p=0.0074). The others show a visible directional shift on
+the chart but don't reach significance at this sample size -- which is
+the honest, expected result for ~10-25 comments per pre/post window, not
+a bug. Treat a non-significant result as "not enough data to tell," not
+as "no effect."
+
 ## API
 
 All data endpoints accept the same filter query params: `platform`
@@ -172,6 +201,7 @@ nothing" (e.g. every checkbox unchecked).
 - `GET /api/summary` -- total comments, sentiment split (counts + %), most-discussed theme, and an `engagement_weighted` block (see below).
 - `GET /api/timeline` -- monthly sentiment counts (plain + engagement-weighted) + the known-event markers from `CONTEXT.md`.
 - `GET /api/events` -- the known-event list on its own.
+- `GET /api/event-analysis` -- unfiltered: for each known event, a &plusmn;30-day pre/post chi-square (or Fisher's exact, for small cells) test of whether the negative-sentiment share actually shifted, not just "looks like it did" on the chart. See "Statistical significance" below.
 - `GET /api/by-platform` -- sentiment split per platform.
 - `GET /api/by-region` -- sentiment split per region (nepal/india/unknown); see DATA_SOURCES.md's Region Heuristic section for why `unknown` dominates on real data.
 - `GET /api/region-comparison` -- unfiltered: for each known event, Nepal vs. India sentiment counts and negative-share in a &plusmn;30-day window around it. Directly answers CONTEXT.md's "does Nepal-sourced sentiment differ from India-sourced sentiment" question.
@@ -224,7 +254,8 @@ table.
   rather than dropped.
 - Event-to-sentiment correlation shown on the timeline is suggestive, not
   causal -- no confounders (seasonality, unrelated news cycles) are
-  controlled for.
+  controlled for, even for the one event (`pipeline/event_analysis.py`)
+  that clears statistical significance.
 - `region` (nepal/india/unknown) is a best-effort signal, not verified
   geography -- see DATA_SOURCES.md's Region Heuristic section. It's fully
   populated in the synthetic sample data (generated top-down from known
