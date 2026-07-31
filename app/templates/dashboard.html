@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wai Wai / CG Foods Sentiment Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="brand-mark">WW</span>
+    <h1>Wai Wai / CG Foods Sentiment Tracker</h1>
+  </div>
+  <div class="topbar-right">
+    <label for="start-date">From</label>
+    <input type="date" id="start-date" data-min="{{ window_start }}" data-max="{{ window_end }}">
+    <label for="end-date">To</label>
+    <input type="date" id="end-date" data-min="{{ window_start }}" data-max="{{ window_end }}">
+    <button id="reset-range" type="button" class="btn-plain">Reset range</button>
+  </div>
+</header>
+
+<div class="layout">
+
+  <aside class="sidebar">
+    <div class="filter-group">
+      <h2>Platform</h2>
+      {% for p in platforms %}
+      <label class="checkbox-row">
+        <input type="checkbox" class="filter-platform" value="{{ p }}" checked>
+        <span>{{ p|capitalize }}</span>
+      </label>
+      {% endfor %}
+    </div>
+
+    <div class="filter-group">
+      <h2>Sentiment</h2>
+      {% for s in sentiments %}
+      <label class="checkbox-row">
+        <input type="checkbox" class="filter-sentiment" value="{{ s }}" checked>
+        <span class="sentiment-swatch sentiment-{{ s }}"></span>
+        <span>{{ s|capitalize }}</span>
+      </label>
+      {% endfor %}
+    </div>
+
+    <div class="filter-group">
+      <h2>Keyword search</h2>
+      <input type="text" id="keyword-search" placeholder="e.g. price, quality, Current Noodles" class="text-input">
+    </div>
+
+    <div class="filter-group">
+      <button id="clear-filters" type="button" class="btn-plain btn-block">Clear all filters</button>
+    </div>
+
+    <div class="filter-footnote">
+      <p>Facebook and X/Twitter volumes are structurally smaller than YouTube in this dataset (see DATA_SOURCES.md) &mdash; do not read cross-platform totals as comparable sample sizes.</p>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <section class="kpi-row" id="kpi-row">
+      <div class="kpi-box">
+        <span class="kpi-label">Comments analyzed</span>
+        <span class="kpi-value" id="kpi-total">&mdash;</span>
+      </div>
+      <div class="kpi-box kpi-positive">
+        <span class="kpi-label">Positive</span>
+        <span class="kpi-value" id="kpi-positive">&mdash;</span>
+      </div>
+      <div class="kpi-box kpi-negative">
+        <span class="kpi-label">Negative</span>
+        <span class="kpi-value" id="kpi-negative">&mdash;</span>
+      </div>
+      <div class="kpi-box kpi-neutral">
+        <span class="kpi-label">Neutral</span>
+        <span class="kpi-value" id="kpi-neutral">&mdash;</span>
+      </div>
+      <div class="kpi-box">
+        <span class="kpi-label">Most-discussed theme</span>
+        <span class="kpi-value kpi-value-text" id="kpi-theme">&mdash;</span>
+      </div>
+    </section>
+
+    <section class="panel" id="timeline-panel">
+      <div class="panel-header">
+        <h2>Sentiment over time</h2>
+        <span class="panel-sub">Monthly comment volume by sentiment, with known events marked</span>
+      </div>
+      <div class="chart-wrap chart-wrap-tall">
+        <canvas id="timeline-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="panel" id="platform-panel">
+      <div class="panel-header">
+        <h2>Sentiment by platform</h2>
+        <span class="panel-sub">Share of positive / negative / neutral comments per platform</span>
+      </div>
+      <div class="platform-charts">
+        <div class="platform-chart-cell">
+          <div class="chart-wrap chart-wrap-small"><canvas id="chart-platform-youtube"></canvas></div>
+          <div class="platform-chart-caption"><strong>YouTube</strong> <span id="n-youtube">n=0</span></div>
+        </div>
+        <div class="platform-chart-cell">
+          <div class="chart-wrap chart-wrap-small"><canvas id="chart-platform-twitter"></canvas></div>
+          <div class="platform-chart-caption"><strong>X / Twitter</strong> <span id="n-twitter">n=0</span></div>
+        </div>
+        <div class="platform-chart-cell">
+          <div class="chart-wrap chart-wrap-small"><canvas id="chart-platform-facebook"></canvas></div>
+          <div class="platform-chart-caption"><strong>Facebook</strong> <span id="n-facebook">n=0</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" id="theme-panel">
+      <div class="panel-header">
+        <h2>Theme frequency by sentiment</h2>
+        <span class="panel-sub">Keyword-tagged themes (CONTEXT.md seed dictionary), split by sentiment class</span>
+      </div>
+      <div class="chart-wrap chart-wrap-medium">
+        <canvas id="theme-chart"></canvas>
+      </div>
+    </section>
+
+    <section class="panel" id="table-panel">
+      <div class="panel-header">
+        <h2>Comments</h2>
+        <span class="panel-sub" id="table-count-sub">&mdash;</span>
+      </div>
+      <div class="table-wrap">
+        <table id="comments-table">
+          <thead>
+            <tr>
+              <th class="col-date">Date</th>
+              <th class="col-platform">Platform</th>
+              <th class="col-sentiment">Sentiment</th>
+              <th class="col-themes">Themes</th>
+              <th class="col-text">Comment</th>
+              <th class="col-engagement">Engagement</th>
+            </tr>
+          </thead>
+          <tbody id="comments-tbody">
+          </tbody>
+        </table>
+        <p class="empty-state" id="empty-state" hidden>No comments match these filters.</p>
+      </div>
+      <div class="pagination" id="pagination">
+        <button id="page-prev" type="button" class="btn-plain">&larr; Prev</button>
+        <span id="page-info">&mdash;</span>
+        <button id="page-next" type="button" class="btn-plain">Next &rarr;</button>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="/static/js/dashboard.js"></script>
+</body>
+</html>

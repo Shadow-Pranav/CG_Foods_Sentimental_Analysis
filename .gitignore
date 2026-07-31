@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/*.db
+data/raw_comments.csv
+data/classification_report.json
+data/models/
+.DS_Store
