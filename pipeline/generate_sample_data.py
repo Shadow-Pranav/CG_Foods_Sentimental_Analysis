@@ -25,10 +25,12 @@ pipeline/collect.py path.
 
 import csv
 import random
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from events import KNOWN_EVENTS, WINDOW_START, WINDOW_END
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from events import KNOWN_EVENTS, WINDOW_START, WINDOW_END  # noqa: E402
 
 RNG_SEED = 42
 N_ROWS = 320

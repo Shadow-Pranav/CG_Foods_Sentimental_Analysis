@@ -9,12 +9,11 @@ Run with: uvicorn app.main:app --reload
 """
 
 import json
-import os
 import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -25,7 +24,6 @@ try:
 except ImportError:
     pass
 
-from app.chat import run_chat
 from pipeline.analyze import COMPETITOR_DISPLAY_NAMES, COMPETITOR_TAGS
 from pipeline.db import DB_PATH
 from pipeline.event_analysis import SIGNIFICANCE_ALPHA, WINDOW_DAYS, analyze_event
@@ -38,25 +36,21 @@ templates = Jinja2Templates(directory=str(APP_DIR / "templates"))
 app = FastAPI(title="Wai Wai / CG Foods Sentiment Tracker")
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
-_test_client = None
-
-
-def get_internal_client():
-    """A FastAPI TestClient bound to this same app, used by the chatbot
-    (app/chat.py) to call /api/* endpoints in-process. This guarantees the
-    chatbot's numbers come from the identical aggregation code the
-    dashboard's own fetch() calls hit -- not a second, divergent query
-    path. Built lazily so importing this module doesn't require httpx to
-    already be configured at import time."""
-    global _test_client
-    if _test_client is None:
-        from fastapi.testclient import TestClient
-        _test_client = TestClient(app)
-    return _test_client
-
 VALID_PLATFORMS = ["youtube", "twitter", "facebook"]
 VALID_SENTIMENTS = ["positive", "negative", "neutral"]
 VALID_REGIONS = ["nepal", "india", "unknown"]
+
+
+def empty_counts() -> dict:
+    return dict.fromkeys(VALID_SENTIMENTS, 0)
+
+
+def pct_split(counts: dict, total: float = None) -> dict:
+    """counts -> {label: percent}, each rounded to 1dp. total defaults to
+    sum(counts.values()) but can be passed explicitly (e.g. a separately
+    computed weighted total)."""
+    total = sum(counts.values()) if total is None else total
+    return {k: round((v / total) * 100, 1) if total else 0.0 for k, v in counts.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +147,7 @@ def compute_engagement_weighted(conn, where_sql: str, params: list) -> dict:
     concentration remains visible rather than hiding it -- if one comment
     is still, say, 15% of the total weight, that's worth knowing before
     trusting the weighted split."""
-    counts = {"positive": 0.0, "negative": 0.0, "neutral": 0.0}
+    counts = empty_counts()
     rows = conn.execute(
         f"SELECT final_label, SUM(LN(1 + MAX(engagement, 0))) as weight "
         f"FROM comments WHERE {where_sql} GROUP BY final_label",
@@ -163,9 +157,7 @@ def compute_engagement_weighted(conn, where_sql: str, params: list) -> dict:
         if r["final_label"] in counts:
             counts[r["final_label"]] = r["weight"] or 0.0
     total_weight = sum(counts.values())
-    percentages = {
-        k: round((v / total_weight) * 100, 1) if total_weight else 0.0 for k, v in counts.items()
-    }
+    percentages = pct_split(counts, total_weight)
 
     max_row = conn.execute(
         f"SELECT MAX(LN(1 + MAX(engagement, 0))) as max_weight FROM comments WHERE {where_sql}",
@@ -271,8 +263,8 @@ def api_summary(platform: str = Query(None), sentiment: str = Query(None), regio
     conn = get_db()
     if not table_exists(conn, "comments"):
         conn.close()
-        return {"total_comments": 0, "counts": {"positive": 0, "negative": 0, "neutral": 0},
-                "percentages": {"positive": 0, "negative": 0, "neutral": 0}, "most_discussed_theme": None,
+        return {"total_comments": 0, "counts": empty_counts(),
+                "percentages": empty_counts(), "most_discussed_theme": None,
                 "engagement_weighted": None}
 
     where_sql, params = filters.where_clause()
@@ -281,14 +273,12 @@ def api_summary(platform: str = Query(None), sentiment: str = Query(None), regio
         params,
     ).fetchall()
 
-    counts = {"positive": 0, "negative": 0, "neutral": 0}
+    counts = empty_counts()
     for r in rows:
         if r["final_label"] in counts:
             counts[r["final_label"]] = r["cnt"]
     total = sum(counts.values())
-    percentages = {
-        k: round((v / total) * 100, 1) if total else 0.0 for k, v in counts.items()
-    }
+    percentages = pct_split(counts, total)
 
     theme_rows = conn.execute(
         f"SELECT themes FROM comments WHERE {where_sql} AND themes IS NOT NULL",
@@ -334,8 +324,8 @@ def api_timeline(platform: str = Query(None), sentiment: str = Query(None), regi
         filters.start_date or WINDOW_START,
         filters.end_date or WINDOW_END,
     )
-    by_period = {p: {"positive": 0, "negative": 0, "neutral": 0} for p in periods}
-    by_period_weight = {p: {"positive": 0.0, "negative": 0.0, "neutral": 0.0} for p in periods}
+    by_period = {p: empty_counts() for p in periods}
+    by_period_weight = {p: empty_counts() for p in periods}
 
     if table_exists(conn, "comments"):
         where_sql, params = filters.where_clause()
@@ -433,7 +423,7 @@ def api_by_platform(platform: str = Query(None), sentiment: str = Query(None), r
     filters = Filters(platform, sentiment, start_date, end_date, q, region)
     conn = get_db()
 
-    result = {p: {"positive": 0, "negative": 0, "neutral": 0} for p in VALID_PLATFORMS}
+    result = {p: empty_counts() for p in VALID_PLATFORMS}
     if table_exists(conn, "comments"):
         where_sql, params = filters.where_clause()
         rows = conn.execute(
@@ -453,7 +443,7 @@ def api_by_platform(platform: str = Query(None), sentiment: str = Query(None), r
     for p in VALID_PLATFORMS:
         counts = result[p]
         total = sum(counts.values())
-        percentages = {k: round((v / total) * 100, 1) if total else 0.0 for k, v in counts.items()}
+        percentages = pct_split(counts, total)
         platforms_out.append({
             "platform": p,
             "total": total,
@@ -474,7 +464,7 @@ def api_by_region(platform: str = Query(None), sentiment: str = Query(None), reg
     filters = Filters(platform, sentiment, start_date, end_date, q, region)
     conn = get_db()
 
-    result = {r: {"positive": 0, "negative": 0, "neutral": 0} for r in VALID_REGIONS}
+    result = {r: empty_counts() for r in VALID_REGIONS}
     if table_exists(conn, "comments"):
         where_sql, params = filters.where_clause()
         rows = conn.execute(
@@ -495,7 +485,7 @@ def api_by_region(platform: str = Query(None), sentiment: str = Query(None), reg
     for reg in VALID_REGIONS:
         counts = result[reg]
         total = sum(counts.values())
-        percentages = {k: round((v / total) * 100, 1) if total else 0.0 for k, v in counts.items()}
+        percentages = pct_split(counts, total)
         regions_out.append({
             "region": reg,
             "total": total,
@@ -548,7 +538,7 @@ def api_region_comparison():
                 """,
                 (reg, window_start, f"{window_end}T23:59:59"),
             ).fetchall()
-            counts = {"positive": 0, "negative": 0, "neutral": 0}
+            counts = empty_counts()
             for r in rows:
                 if r["final_label"] in counts:
                     counts[r["final_label"]] = r["cnt"]
@@ -595,7 +585,7 @@ def api_themes(platform: str = Query(None), sentiment: str = Query(None), region
             except (json.JSONDecodeError, TypeError):
                 themes = []
             for t in themes:
-                bucket = theme_counts.setdefault(t, {"positive": 0, "negative": 0, "neutral": 0})
+                bucket = theme_counts.setdefault(t, empty_counts())
                 label = r["final_label"]
                 if label in bucket:
                     bucket[label] += 1
@@ -622,9 +612,9 @@ def api_competitors(platform: str = Query(None), sentiment: str = Query(None), r
     filters = Filters(platform, sentiment, start_date, end_date, q, region)
     conn = get_db()
 
-    totals = {c: {"positive": 0, "negative": 0, "neutral": 0} for c in COMPETITOR_TAGS}
+    totals = {c: empty_counts() for c in COMPETITOR_TAGS}
     periods = month_range(filters.start_date or WINDOW_START, filters.end_date or WINDOW_END)
-    monthly = {c: {p: {"positive": 0, "negative": 0, "neutral": 0} for p in periods} for c in COMPETITOR_TAGS}
+    monthly = {c: {p: empty_counts() for p in periods} for c in COMPETITOR_TAGS}
 
     if table_exists(conn, "comments"):
         where_sql, params = filters.where_clause()
@@ -783,59 +773,3 @@ def api_report():
         media_type="application/pdf",
         headers={"Content-Disposition": "attachment; filename=waiwai_sentiment_report.pdf"},
     )
-
-
-# ---------------------------------------------------------------------------
-# API: text-to-query chatbot (step 10)
-#
-# Translates a natural-language question into calls against the *existing*
-# /api/* endpoints above (via an in-process TestClient) rather than raw SQL
-# or a RAG/embedding pass over comment text -- see app/chat.py's docstring.
-# ---------------------------------------------------------------------------
-
-@app.post("/api/chat")
-def api_chat(payload: dict = Body(...)):
-    question = (payload or {}).get("question", "").strip()
-    if not question:
-        raise HTTPException(status_code=400, detail="Missing 'question' in request body.")
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="ANTHROPIC_API_KEY is not set. Add it to .env to enable the chat assistant (see .env.example).",
-        )
-
-    try:
-        import anthropic
-    except ImportError:
-        raise HTTPException(
-            status_code=503,
-            detail="The 'anthropic' package is not installed -- pip install -r requirements.txt.",
-        )
-
-    conn = get_db()
-    if not table_exists(conn, "comments"):
-        conn.close()
-        raise HTTPException(status_code=409, detail="No data yet -- run the pipeline first.")
-
-    anthropic_client = anthropic.Anthropic(api_key=api_key)
-    test_client = get_internal_client()
-
-    try:
-        result = run_chat(test_client, anthropic_client, conn, question)
-    except anthropic.AuthenticationError:
-        raise HTTPException(
-            status_code=503,
-            detail="ANTHROPIC_API_KEY was rejected by the Anthropic API (invalid or revoked key).",
-        )
-    except anthropic.RateLimitError:
-        raise HTTPException(status_code=429, detail="Anthropic API rate limit hit -- try again shortly.")
-    except anthropic.APIConnectionError:
-        raise HTTPException(status_code=503, detail="Could not reach the Anthropic API (network error).")
-    except anthropic.APIStatusError as exc:
-        raise HTTPException(status_code=502, detail=f"Anthropic API error: {exc.message}")
-    finally:
-        conn.close()
-
-    return result

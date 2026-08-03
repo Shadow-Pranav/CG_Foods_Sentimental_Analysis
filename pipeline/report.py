@@ -18,8 +18,9 @@ generate_report_pdf(), so the download always reflects the current DB).
 """
 
 import io
+import json
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -48,8 +49,11 @@ COLOR_NEUTRAL = colors.HexColor("#91733F")
 COLOR_BORDER = colors.HexColor("#DBD2C0")
 
 
+def _empty_counts() -> dict:
+    return {"positive": 0, "negative": 0, "neutral": 0}
+
+
 def _month_range(start: str, end: str) -> list:
-    from datetime import date
     d0, d1 = date.fromisoformat(start), date.fromisoformat(end)
     periods, y, m = [], d0.year, d0.month
     while (y, m) <= (d1.year, d1.month):
@@ -69,7 +73,7 @@ def gather_report_data(conn) -> dict:
     label_rows = conn.execute(
         f"SELECT final_label, COUNT(*) as c FROM comments WHERE {kept_where} GROUP BY final_label"
     ).fetchall()
-    counts = {"positive": 0, "negative": 0, "neutral": 0}
+    counts = _empty_counts()
     for r in label_rows:
         if r["final_label"] in counts:
             counts[r["final_label"]] = r["c"]
@@ -80,7 +84,7 @@ def gather_report_data(conn) -> dict:
     ).fetchall()
     by_platform = {}
     for r in platform_rows:
-        by_platform.setdefault(r["platform"], {"positive": 0, "negative": 0, "neutral": 0})
+        by_platform.setdefault(r["platform"], _empty_counts())
         if r["final_label"] in by_platform[r["platform"]]:
             by_platform[r["platform"]][r["final_label"]] = r["c"]
 
@@ -90,7 +94,7 @@ def gather_report_data(conn) -> dict:
     by_region = {}
     for r in region_rows:
         reg = r["region"] or "unknown"
-        by_region.setdefault(reg, {"positive": 0, "negative": 0, "neutral": 0})
+        by_region.setdefault(reg, _empty_counts())
         if r["final_label"] in by_region[reg]:
             by_region[reg][r["final_label"]] = r["c"]
 
@@ -99,19 +103,18 @@ def gather_report_data(conn) -> dict:
         f"SELECT strftime('%Y-%m', timestamp) as period, final_label, COUNT(*) as c "
         f"FROM comments WHERE {kept_where} GROUP BY period, final_label"
     ).fetchall()
-    timeline = {p: {"positive": 0, "negative": 0, "neutral": 0} for p in periods}
+    timeline = {p: _empty_counts() for p in periods}
     for r in timeline_rows:
         if r["period"] in timeline and r["final_label"] in timeline[r["period"]]:
             timeline[r["period"]][r["final_label"]] = r["c"]
 
     events = [analyze_event(conn, e) for e in KNOWN_EVENTS]
 
-    import json
     theme_rows = conn.execute(
         f"SELECT themes, final_label FROM comments WHERE {kept_where} AND themes IS NOT NULL"
     ).fetchall()
     theme_counts = {}
-    competitor_counts = {c: {"positive": 0, "negative": 0, "neutral": 0} for c in COMPETITOR_TAGS}
+    competitor_counts = {c: _empty_counts() for c in COMPETITOR_TAGS}
     for r in theme_rows:
         try:
             themes = json.loads(r["themes"]) if r["themes"] else []
@@ -123,7 +126,7 @@ def gather_report_data(conn) -> dict:
                 if label in competitor_counts[t]:
                     competitor_counts[t][label] += 1
                 continue
-            bucket = theme_counts.setdefault(t, {"positive": 0, "negative": 0, "neutral": 0})
+            bucket = theme_counts.setdefault(t, _empty_counts())
             if label in bucket:
                 bucket[label] += 1
 

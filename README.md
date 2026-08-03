@@ -10,31 +10,105 @@ Read `PROJECT_INSTRUCTIONS.md`, `CONTEXT.md`, `DATA_SOURCES.md`, and
 `METHODOLOGY.md` first -- they define scope, sourcing, and the
 cleaning/classification methodology this pipeline implements.
 
+## Features
+
+- Five-stage pipeline (collect/generate &rarr; clean &rarr; classify &rarr; analyze &rarr; event-analysis) writing into one SQLite database.
+- Dual sentiment classification: VADER baseline + a HuggingFace multilingual transformer, compared per `METHODOLOGY.md`'s protocol.
+- Keyword/theme tagging, per-competitor share-of-voice, and word-cloud term frequency.
+- Chi-square/Fisher's-exact significance testing of sentiment shifts around known real-world events.
+- A single-page dashboard (Chart.js) with platform/sentiment/region/date/keyword filters applied live across every chart and table.
+- Downloadable PDF report with an auto-generated narrative summary.
+- A pytest suite covering the pipeline logic and the full API filter surface.
+
+## Tech stack
+
+- **Language:** Python 3.9+
+- **Backend:** FastAPI, Jinja2 templates, Uvicorn (ASGI server)
+- **Data store:** SQLite (`data/sentiment.db`), no separate DB server needed
+- **NLP/classification:** VADER (`vaderSentiment`), HuggingFace `transformers` + `torch` (`cardiffnlp/twitter-xlm-roberta-base-sentiment`), `langdetect`
+- **Stats:** `scipy` (chi-square / Fisher's exact)
+- **Reporting:** `reportlab` (PDF generation)
+- **Frontend:** vanilla HTML/CSS/JS + Chart.js (loaded via CDN, no build step/npm)
+- **Testing:** `pytest` + FastAPI's `TestClient` (`httpx`)
+- **Optional live collection:** `google-api-python-client` (YouTube Data API v3), `python-dotenv`
+
+## Prerequisites
+
+- Python 3.9 or newer
+- ~1.5GB free disk (the HuggingFace transformer model is ~1.1GB, cached locally after first download)
+- Internet access on the *first* `pipeline/classify.py` run only, to download that model (see "Switching to real data collection" below for offline/restricted-network alternatives)
+
 ## Quickstart (sample data, no API keys needed)
 
+Everything below is run from a terminal, inside this project's folder.
+No real API keys are required for any of this -- it all works on the
+bundled synthetic sample data.
+
+### 1. One-time setup (only do this once)
+
 ```bash
+# Create an isolated Python environment just for this project
 python3 -m venv .venv
+
+# "Enter" that environment (your terminal prompt usually changes to show this)
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+# Install every Python package the project needs
 pip install -r requirements.txt
+```
 
-python pipeline/generate_sample_data.py   # writes data/raw_comments.csv (~320 synthetic rows)
-python pipeline/clean.py                  # dedupe/strip/langdetect/spam-filter -> data/sentiment.db
-python pipeline/classify.py               # VADER baseline + HuggingFace transformer validation pass
-python pipeline/analyze.py                # theme tagging + word-cloud term frequency
-python pipeline/event_analysis.py         # chi-square/Fisher's-exact significance per known event
+### 2. Build the dataset (run these five, in this exact order)
 
+Each command feeds the next one -- together they turn raw fake comments
+into the labeled, analyzed database the website reads from.
+
+```bash
+# Step A: invent ~320 realistic sample comments (YouTube/X/Facebook)
+python pipeline/generate_sample_data.py
+
+# Step B: clean them up -- remove duplicates, spam, HTML/links; guess
+#         language and region -- and save everything into a database file
+python pipeline/clean.py
+
+# Step C: label every comment as positive / negative / neutral
+python pipeline/classify.py
+
+# Step D: tag topics (price, taste, packaging...) and competitor mentions
+python pipeline/analyze.py
+
+# Step E: check whether sentiment really shifted around real events
+#         (price hikes, the 2024 fine, etc.) using statistics, not guesswork
+python pipeline/event_analysis.py
+```
+
+After this, all the results live in `data/sentiment.db`.
+
+### 3. Start the website
+
+```bash
 uvicorn app.main:app --reload
 ```
 
-Then open http://127.0.0.1:8000.
+Now open **http://127.0.0.1:8000** in your browser. You should see the
+full dashboard with charts, filters, and tables already populated.
 
-Re-running `generate_sample_data.py` → `clean.py` → `classify.py` →
-`analyze.py` rebuilds `data/sentiment.db` from scratch each time (clean.py
-drops and recreates the `comments` table), so it's safe to iterate.
+To stop the server later, go back to that terminal and press `Ctrl+C`.
 
-Note: this environment only has Python 3.9 available (no 3.11), so the
-project was built and verified against 3.9. Nothing here uses 3.11-only
-syntax, so it should run unmodified on 3.11 too.
+### Re-running / starting over
+
+If you want a completely fresh dataset, just re-run step 2's five
+commands again in order -- they overwrite `data/sentiment.db` from
+scratch each time, so it's always safe to repeat.
+
+### Notes
+
+- This was built and tested on **Python 3.9** (the only version
+  available in the build environment). Nothing here needs 3.11-only
+  features, so it should also run fine on newer Python versions.
+- Every command above must be run with the virtual environment active
+  (step 1's `source .venv/bin/activate`). If a command says
+  `command not found: python` or `uvicorn`, that's almost always why --
+  just re-run the `source .venv/bin/activate` line first.
 
 ## Pipeline stages
 
@@ -45,6 +119,35 @@ syntax, so it should run unmodified on 3.11 too.
 | 3. Classification | `pipeline/classify.py` | VADER baseline on every kept row + a HuggingFace multilingual transformer (`cardiffnlp/twitter-xlm-roberta-base-sentiment`) on a sampled subset, per `METHODOLOGY.md`'s comparison protocol |
 | 4. Analysis | `pipeline/analyze.py` + `pipeline/event_analysis.py` | Keyword/theme tagging from the `CONTEXT.md` seed dictionary + term-frequency word-cloud data per sentiment class; chi-square/Fisher's-exact significance testing of sentiment shifts around each known event |
 | 5. Reporting | `app/main.py` + `app/templates/dashboard.html` | FastAPI JSON API + a single dashboard page (Chart.js) |
+
+## Project structure
+
+```
+.
+├── app/                      FastAPI app
+│   ├── main.py                 Routes + JSON API (reads data/sentiment.db)
+│   ├── static/                 CSS + vanilla JS for the dashboard
+│   └── templates/               dashboard.html (Jinja2)
+├── pipeline/                  Data pipeline, run stage by stage
+│   ├── generate_sample_data.py  Synthetic data generator (default path)
+│   ├── collect.py                Real collection (YouTube/X/Facebook, opt-in)
+│   ├── clean.py                   Dedup, strip HTML/URLs/emoji, langdetect, spam filter
+│   ├── classify.py                 VADER + transformer sentiment classification
+│   ├── analyze.py                   Theme/competitor tagging + word-cloud term frequency
+│   ├── event_analysis.py             Chi-square/Fisher's-exact event significance testing
+│   ├── report.py                      PDF report generation
+│   ├── label_gold.py                   Interactive human gold-labeling CLI
+│   ├── evaluate.py                      Scores VADER/transformer against human gold labels
+│   ├── events.py                         Known real-world event dates (single source of truth)
+│   └── db.py                              SQLite schema + connection helpers
+├── tests/                    pytest suite (see "Running tests")
+├── data/                     Generated at runtime (gitignored except gold_labels.csv)
+├── requirements.txt
+├── .env.example              Copy to .env to configure optional API keys
+├── CONTEXT.md / DATA_SOURCES.md / METHODOLOGY.md / PROJECT_INSTRUCTIONS.md
+│                             Scope, sourcing, and methodology this pipeline implements
+└── README.md
+```
 
 ### Why a synthetic dataset?
 
@@ -228,7 +331,6 @@ nothing" (e.g. every checkbox unchecked).
 - `GET /api/wordcloud` -- top term-frequency data per sentiment class (`pipeline/analyze.py`'s precomputed artifact, not filter-aware). Rendered on the dashboard as three ranked horizontal-bar "top terms" charts (a Chart.js-consistent alternative to a true word cloud, per the no-extra-libraries constraint) rather than as a literal word cloud.
 - `GET /api/comments` -- paginated comment table (`page`, `page_size` params too).
 - `GET /api/report` -- downloads a PDF snapshot of the full (unfiltered) dataset: overall split, by-platform, by-region, events with statistical significance, theme frequency, competitor mentions, and an auto-generated narrative summary computed from the actual numbers. See "Report export" below.
-- `POST /api/chat` -- natural-language question in, answer + the structured API data behind it out. Implemented as Claude tool-calling over the endpoints above (not free-text search, not a second RAG/embedding system) -- see "Chat assistant" below.
 
 ### Engagement-weighted sentiment
 
@@ -260,49 +362,6 @@ theme-frequency bar chart split by sentiment, a named-competitor mentions
 chart, three ranked "top terms" bar charts (one per sentiment class), and
 a paginated comment table.
 
-## Chat assistant
-
-`POST /api/chat` (dashboard: the "Ask the data" panel at the bottom) lets
-you ask a question in plain English -- e.g. "Which platform is most
-negative?" or "Was the KMC fine statistically significant?" -- and get
-back a natural-language answer plus the structured data behind it.
-
-It's built as Claude tool-calling over the *existing* `/api/*` endpoints,
-not a second retrieval system:
-
-- The model (`claude-opus-5`) is given 8 tools, one per read endpoint
-  (`summary`, `timeline`, `by_platform`, `by_region`, `themes`,
-  `competitors`, `comments`, `events`) with the same filter parameters
-  described above. Each tool call runs through FastAPI's `TestClient`
-  against the real, running app -- so a chatbot answer is computed by the
-  exact same SQL/aggregation code as the charts, never a separate
-  implementation that could silently disagree with the dashboard.
-- There is deliberately no free-text/vector search over raw comment text
-  as a chatbot mechanism. Every number the model cites has to come from
-  calling one of the endpoints above, so "how many negative comments on
-  YouTube in Nepal" is answered by the same `by_region`/`summary` logic
-  a human would get from the sidebar filters, not by the model guessing
-  from retrieved snippets.
-- The system prompt is built fresh per request from
-  `build_label_source_context()` (`app/chat.py`), which reports the
-  current `label_source` mix in the database (VADER vs. transformer vs.
-  human-corrected, from `pipeline/classify.py`/`pipeline/evaluate.py`).
-  This keeps the model from citing VADER-only numbers as if they were the
-  transformer-validated or human-gold-checked results from steps 1-2.
-- The tool-call loop is capped at 4 round-trips
-  (`MAX_TOOL_ITERATIONS` in `app/chat.py`); if the model hasn't reached a
-  final answer by then, it's forced to answer (or say it couldn't) with
-  whatever it already retrieved rather than looping indefinitely.
-- Requires `ANTHROPIC_API_KEY` in `.env` (see `.env.example`). Without it,
-  `/api/chat` returns a clean `503` explaining what's missing instead of
-  crashing -- the rest of the app works fine with no key configured.
-
-```bash
-curl -s http://127.0.0.1:8000/api/chat \
-  -H "content-type: application/json" \
-  -d '{"question": "Which platform is most negative?"}'
-```
-
 ## Running tests
 
 ```bash
@@ -320,13 +379,7 @@ selection, the +inf-odds-ratio JSON-serialization fix, insufficient-data
 handling); `app/main.py`'s API filter combinations (platform +
 sentiment + region + date + keyword search together, empty-param-means-
 nothing vs. omitted-param-means-no-filter, pagination, ordering, and
-`exclusion_reason` never leaking through regardless of filters); and
-`app/chat.py`'s tool-calling loop (`tests/test_chat.py`, with a scripted
-mock standing in for the Anthropic client) -- tool-call routing through
-the real `/api/*` endpoint code, the `MAX_TOOL_ITERATIONS` cap forcing a
-final no-tools answer, refusal short-circuiting, empty-filter-value
-handling, and the label-source provenance text that gets injected into
-the system prompt.
+`exclusion_reason` never leaking through regardless of filters).
 
 The API tests use FastAPI's `TestClient` against a temp SQLite file seeded
 with known rows per test (see `tests/conftest.py`) -- they don't touch
@@ -357,11 +410,49 @@ dataset.
   event/theme context) but would skew heavily toward `unknown` on real
   collected data, since none of YouTube/X/Facebook's public APIs reliably
   expose a commenter's actual location.
-- The chat assistant (`/api/chat`) has been tested against the real
-  backend/tool-execution path with a mocked Anthropic client (tool-use
-  loop, iteration-cap enforcement, refusal handling -- see
-  `tests/test_chat.py`) and against the real API with no key configured
-  (clean 503). It has **not** been tested end-to-end against the live
-  Anthropic API in this environment, since doing so would require
-  spending the user's own API credits without asking first -- verify
-  this path with your own `ANTHROPIC_API_KEY` before relying on it.
+
+## Deployment
+
+This repo has no Dockerfile or CI/CD config -- it's set up for local/
+internal use. To run it as a longer-lived service rather than a dev
+server:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000   # no --reload in production
+```
+
+Put a reverse proxy (nginx, Caddy, etc.) in front if exposing it beyond
+localhost, and run the pipeline (or `pipeline/collect.py` on a schedule)
+to refresh `data/sentiment.db` before each deploy -- the app only reads
+that file, it never writes to it.
+
+## Troubleshooting
+
+- **`command not found: python` / `uvicorn`** -- the virtual environment
+  isn't active; re-run `source .venv/bin/activate` (step 1).
+- **Dashboard loads but every chart is empty** -- the pipeline hasn't been
+  run yet, or `data/sentiment.db` has no `comments` table. Run step 2's
+  five commands in order.
+- **`pipeline/classify.py` hangs or times out on the transformer pass** --
+  expected on a restricted network; it falls back to VADER-only labels
+  automatically after a wall-clock timeout (see "Switching to real data
+  collection" above for the local-model-cache workaround).
+- **Port 8000 already in use** -- another `uvicorn` process is still
+  running; find and stop it (`lsof -ti:8000 | xargs kill` on macOS/Linux)
+  or start this one on a different port (`--port 8001`).
+- **`ModuleNotFoundError` for a pipeline script** -- make sure you're
+  running commands from the project root (not from inside `pipeline/`),
+  and that the virtual environment is active.
+
+## Contributing
+
+Internal project, no formal contribution process. If you're changing
+pipeline or API behavior: run `python -m pytest tests/ -v` before and
+after your change, and update the relevant doc (`METHODOLOGY.md`,
+`DATA_SOURCES.md`, or this README) if the change affects what they
+describe.
+
+## License
+
+No license file is included in this repository. Treat it as internal/
+proprietary to this project unless the repository owner adds one.

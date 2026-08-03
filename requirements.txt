@@ -1,5 +1,4 @@
 # Core data pipeline
-pandas==2.3.3
 vaderSentiment==3.3.2
 langdetect==1.0.9
 scipy==1.13.1
@@ -17,10 +16,6 @@ protobuf==6.33.6
 fastapi==0.128.8
 uvicorn[standard]==0.39.0
 jinja2==3.1.6
-python-multipart==0.0.20
-
-# Text-to-query chatbot (step 10) -- requires ANTHROPIC_API_KEY in .env
-anthropic==0.120.2
 
 # Testing
 pytest==8.4.2

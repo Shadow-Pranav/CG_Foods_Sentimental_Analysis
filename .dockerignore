@@ -1,0 +1,20 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# Secrets -- never bake these into the image; pass at runtime instead
+# (docker-compose.yml reads a host .env for variable substitution).
+.env
+
+# Regenerable pipeline output -- the entrypoint builds these fresh into a
+# mounted ./data volume on first run. Keeping them out of the build
+# context matches .gitignore and keeps images from going stale.
+data/*.db
+data/raw_comments.csv
+data/classification_report.json
+data/event_analysis.json
+data/report.pdf
+data/models/

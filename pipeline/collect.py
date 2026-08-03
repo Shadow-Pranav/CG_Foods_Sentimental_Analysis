@@ -259,20 +259,6 @@ def collect_twitter_from_manual_export(csv_path: str) -> list:
 # Facebook -- thinnest source, manual-export path only
 # ---------------------------------------------------------------------------
 
-def collect_facebook_live():
-    """No reliable free/public API remains for Page post/comment scraping
-    since the Cambridge-Analytica-era lockdowns (DATA_SOURCES.md). A real
-    deployment would use CrowdTangle (if an academic/researcher grant is
-    available) or a browser-based scraper limited to genuinely public
-    content. Neither is wired up here -- use
-    collect_facebook_from_manual_export() instead."""
-    raise NotImplementedError(
-        "Live Facebook collection is not implemented -- see DATA_SOURCES.md's "
-        "Facebook notes. Use collect_facebook_from_manual_export(csv_path) "
-        "with a CrowdTangle export or manually saved public-post data."
-    )
-
-
 def collect_facebook_from_manual_export(csv_path: str) -> list:
     """Expected columns: text, timestamp, page_name, reactions. Region is
     guessed from page_name (e.g. a "CG Foods Nepal" vs "CG Foods India"

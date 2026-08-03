@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persists data/sentiment.db (and the other pipeline output) on the
+      # host across container restarts/rebuilds, so the dataset only has
+      # to be built once. Also where manual-export CSVs referenced by
+      # TWITTER_MANUAL_EXPORT_CSV / FACEBOOK_MANUAL_EXPORT_CSV must live
+      # to be visible inside the container.
+      - ./data:/app/data
+    environment:
+      # Populated by variable substitution from a host .env file (copy
+      # .env.example to .env) if present -- all optional, same as running
+      # without Docker. Compose reads that top-level .env automatically;
+      # it's separate from the app's own python-dotenv loading.
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}
+      - YOUTUBE_RESOLVE_COMMENTER_REGION=${YOUTUBE_RESOLVE_COMMENTER_REGION:-false}
+      - TWITTER_TRY_SNSCRAPE=${TWITTER_TRY_SNSCRAPE:-false}
+      - TWITTER_MANUAL_EXPORT_CSV=${TWITTER_MANUAL_EXPORT_CSV:-}
+      - FACEBOOK_MANUAL_EXPORT_CSV=${FACEBOOK_MANUAL_EXPORT_CSV:-}
