@@ -47,7 +47,7 @@ def window_counts(conn, start_iso: str, end_iso: str) -> tuple:
             SUM(CASE WHEN final_label = 'negative' THEN 1 ELSE 0 END) as neg,
             SUM(CASE WHEN final_label IS NOT NULL AND final_label != 'negative' THEN 1 ELSE 0 END) as non_neg
         FROM comments
-        WHERE exclusion_reason IS NULL AND timestamp >= ? AND timestamp <= ?
+        WHERE exclusion_reason IS NULL AND timestamp >= %s AND timestamp <= %s
         """,
         (start_iso, f"{end_iso}T23:59:59"),
     ).fetchone()

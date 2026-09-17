@@ -27,30 +27,21 @@ def test_weighted_percentages_match_manual_ln_calculation(conn):
     assert result["total_weight"] == round(expected_total, 2)
 
 
-def test_log_transform_prevents_single_outlier_from_dominating():
+def test_log_transform_prevents_single_outlier_from_dominating(conn):
     """A comment with 100x the engagement of everyone else should NOT get
     anywhere near 100x the weight -- that's the entire point of using
     ln(1+engagement) instead of a linear sum."""
-    import sqlite3
-
-    from pipeline.db import SCHEMA, TERM_FREQUENCY_SCHEMA
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    c.execute(SCHEMA)
-    c.execute(TERM_FREQUENCY_SCHEMA)
-
     rows = [{"id": f"n{i}", "platform": "youtube", "timestamp": "2025-01-01T00:00:00",
              "final_label": "negative", "engagement": 5} for i in range(9)]
     rows.append({"id": "viral", "platform": "youtube", "timestamp": "2025-01-01T00:00:00",
                  "final_label": "positive", "engagement": 50000})
-    seed_comments(c, rows)
+    seed_comments(conn, rows)
 
-    result = compute_engagement_weighted(c, "exclusion_reason IS NULL", [])
+    result = compute_engagement_weighted(conn, "exclusion_reason IS NULL", [])
     # Linear-sum weighting would put the viral outlier's share near 100%;
     # log-transformed, it should be well under half.
     assert result["percentages"]["positive"] < 50.0
     assert result["max_single_comment_weight_share_pct"] < 50.0
-    c.close()
 
 
 def test_max_single_comment_weight_share_identifies_the_true_outlier(conn):

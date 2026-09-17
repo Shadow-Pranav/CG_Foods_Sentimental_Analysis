@@ -12,7 +12,7 @@ cleaning/classification methodology this pipeline implements.
 
 ## Features
 
-- Five-stage pipeline (collect/generate &rarr; clean &rarr; classify &rarr; analyze &rarr; event-analysis) writing into one SQLite database.
+- Five-stage pipeline (collect/generate &rarr; clean &rarr; classify &rarr; analyze &rarr; event-analysis) writing into one PostgreSQL database.
 - Dual sentiment classification: VADER baseline + a HuggingFace multilingual transformer, compared per `METHODOLOGY.md`'s protocol.
 - Keyword/theme tagging, per-competitor share-of-voice, and word-cloud term frequency.
 - Chi-square/Fisher's-exact significance testing of sentiment shifts around known real-world events.
@@ -24,7 +24,7 @@ cleaning/classification methodology this pipeline implements.
 
 - **Language:** Python 3.9+
 - **Backend:** FastAPI, Jinja2 templates, Uvicorn (ASGI server)
-- **Data store:** SQLite (`data/sentiment.db`), no separate DB server needed
+- **Data store:** PostgreSQL (`psycopg2`), via `DATABASE_URL` -- `docker-compose.yml` bundles a `db` service so you don't need to install Postgres yourself
 - **NLP/classification:** VADER (`vaderSentiment`), HuggingFace `transformers` + `torch` (`cardiffnlp/twitter-xlm-roberta-base-sentiment`), `langdetect`
 - **Stats:** `scipy` (chi-square / Fisher's exact)
 - **Reporting:** `reportlab` (PDF generation)
@@ -35,6 +35,8 @@ cleaning/classification methodology this pipeline implements.
 ## Prerequisites
 
 - Python 3.9 or newer
+- A running PostgreSQL server (see "Start Postgres" below -- Docker is the
+  easiest route if you don't already have one)
 - ~1.5GB free disk (the HuggingFace transformer model is ~1.1GB, cached locally after first download)
 - Internet access on the *first* `pipeline/classify.py` run only, to download that model (see "Switching to real data collection" below for offline/restricted-network alternatives)
 
@@ -57,7 +59,25 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Build the dataset (run these five, in this exact order)
+### 2. Start Postgres
+
+The pipeline and the app both read/write a PostgreSQL database via the
+`DATABASE_URL` env var (default: `postgresql://postgres:postgres@localhost:5432/cg_foods_sentiment`,
+see `.env.example`). If you don't already have a Postgres server running
+locally, the bundled `docker-compose.yml` will start one for you:
+
+```bash
+docker compose up -d db
+```
+
+This starts Postgres in the background, persisted in a Docker volume
+(`pgdata`) across restarts, and creates the `cg_foods_sentiment` database
+automatically. If you're pointing at a Postgres server you manage
+yourself instead, `cp .env.example .env` and set `DATABASE_URL` there --
+the app only needs the target database to exist; `pipeline/db.py` creates
+its own tables on first use.
+
+### 3. Build the dataset (run these five, in this exact order)
 
 Each command feeds the next one -- together they turn raw fake comments
 into the labeled, analyzed database the website reads from.
@@ -67,7 +87,7 @@ into the labeled, analyzed database the website reads from.
 python pipeline/generate_sample_data.py
 
 # Step B: clean them up -- remove duplicates, spam, HTML/links; guess
-#         language and region -- and save everything into a database file
+#         language and region -- and save everything into Postgres
 python pipeline/clean.py
 
 # Step C: label every comment as positive / negative / neutral
@@ -81,9 +101,10 @@ python pipeline/analyze.py
 python pipeline/event_analysis.py
 ```
 
-After this, all the results live in `data/sentiment.db`.
+After this, all the results live in the `comments` (and `term_frequency`)
+tables of your Postgres database.
 
-### 3. Start the website
+### 4. Start the website
 
 ```bash
 uvicorn app.main:app --reload
@@ -96,9 +117,9 @@ To stop the server later, go back to that terminal and press `Ctrl+C`.
 
 ### Re-running / starting over
 
-If you want a completely fresh dataset, just re-run step 2's five
-commands again in order -- they overwrite `data/sentiment.db` from
-scratch each time, so it's always safe to repeat.
+If you want a completely fresh dataset, just re-run step 3's five
+commands again in order -- `pipeline/clean.py` drops and recreates the
+`comments` table from scratch each time, so it's always safe to repeat.
 
 ### Notes
 
@@ -115,7 +136,7 @@ scratch each time, so it's always safe to repeat.
 | Stage | Script | What it does |
 |---|---|---|
 | 1. Collection | `pipeline/collect.py` (opt-in, real) / `pipeline/generate_sample_data.py` (synthetic, default) | Produces `data/raw_comments.csv` in the schema from `DATA_SOURCES.md` |
-| 2. Cleaning | `pipeline/clean.py` | Dedup (exact + near-dup), strip URLs/HTML/emoji, langdetect, spam heuristics. Writes to `data/sentiment.db` (`comments` table), keeping `text_raw` and excluded rows for auditability |
+| 2. Cleaning | `pipeline/clean.py` | Dedup (exact + near-dup), strip URLs/HTML/emoji, langdetect, spam heuristics. Writes to Postgres (`comments` table), keeping `text_raw` and excluded rows for auditability |
 | 3. Classification | `pipeline/classify.py` | VADER baseline on every kept row + a HuggingFace multilingual transformer (`cardiffnlp/twitter-xlm-roberta-base-sentiment`) on a sampled subset, per `METHODOLOGY.md`'s comparison protocol |
 | 4. Analysis | `pipeline/analyze.py` + `pipeline/event_analysis.py` | Keyword/theme tagging from the `CONTEXT.md` seed dictionary + term-frequency word-cloud data per sentiment class; chi-square/Fisher's-exact significance testing of sentiment shifts around each known event |
 | 5. Reporting | `app/main.py` + `app/templates/dashboard.html` | FastAPI JSON API + a single dashboard page (Chart.js) |
@@ -125,7 +146,7 @@ scratch each time, so it's always safe to repeat.
 ```
 .
 ├── app/                      FastAPI app
-│   ├── main.py                 Routes + JSON API (reads data/sentiment.db)
+│   ├── main.py                 Routes + JSON API (reads Postgres via pipeline/db.py)
 │   ├── static/                 CSS + vanilla JS for the dashboard
 │   └── templates/               dashboard.html (Jinja2)
 ├── pipeline/                  Data pipeline, run stage by stage
@@ -139,13 +160,17 @@ scratch each time, so it's always safe to repeat.
 │   ├── label_gold.py                   Interactive human gold-labeling CLI
 │   ├── evaluate.py                      Scores VADER/transformer against human gold labels
 │   ├── events.py                         Known real-world event dates (single source of truth)
-│   └── db.py                              SQLite schema + connection helpers
+│   └── db.py                              PostgreSQL schema + connection helpers (DATABASE_URL)
 ├── tests/                    pytest suite (see "Running tests")
-├── data/                     Generated at runtime (gitignored except gold_labels.csv)
+├── data/                     Generated at runtime (gitignored except gold_labels.csv) --
+│                             pipeline output files (raw_comments.csv, reports, the
+│                             transformer model cache); the dataset itself lives in Postgres
 ├── requirements.txt
-├── .env.example              Copy to .env to configure optional API keys
-├── CONTEXT.md / DATA_SOURCES.md / METHODOLOGY.md / PROJECT_INSTRUCTIONS.md
-│                             Scope, sourcing, and methodology this pipeline implements
+├── docker-compose.yml        `db` (Postgres) + `app` services
+├── Dockerfile / docker-entrypoint.sh
+├── .env.example              Copy to .env to configure DATABASE_URL and optional API keys
+├── CONTEXT.md / DATA_SOURCES.md / METHODOLOGY.md / PROJECT_INSTRUCTIONS.md / TECHNICAL.md
+│                             Scope, sourcing, methodology, and architecture this project implements
 └── README.md
 ```
 
@@ -255,11 +280,11 @@ python pipeline/evaluate.py             # scores VADER, the transformer, and
 ```
 
 The sample is written to `data/gold_labels.csv` (tracked in git -- it's
-real hand-labeling effort worth keeping, unlike the regenerable
-`sentiment.db`/`raw_comments.csv`) rather than a DB column, because
-`clean.py` drops and recreates the `comments` table on every pipeline run
-and would otherwise silently wipe hand-labeled data. `evaluate.py` re-joins
-it against the DB by comment `id` every time it runs, so it always reflects
+real hand-labeling effort worth keeping, unlike the regenerable Postgres
+tables/`raw_comments.csv`) rather than a DB column, because `clean.py`
+drops and recreates the `comments` table on every pipeline run and would
+otherwise silently wipe hand-labeled data. `evaluate.py` re-joins it
+against the DB by comment `id` every time it runs, so it always reflects
 the current pipeline output.
 
 ## Report export
@@ -364,6 +389,12 @@ a paginated comment table.
 
 ## Running tests
 
+Tests need a reachable Postgres server -- the same one from "Start
+Postgres" above works (`docker compose up -d db`). They run against a
+separate `cg_foods_sentiment_test` database (`TEST_DATABASE_URL` env var
+to override), created automatically on first run, so the suite never
+touches your working `cg_foods_sentiment` dataset.
+
 ```bash
 python -m pytest tests/ -v
 ```
@@ -381,10 +412,10 @@ sentiment + region + date + keyword search together, empty-param-means-
 nothing vs. omitted-param-means-no-filter, pagination, ordering, and
 `exclusion_reason` never leaking through regardless of filters).
 
-The API tests use FastAPI's `TestClient` against a temp SQLite file seeded
-with known rows per test (see `tests/conftest.py`) -- they don't touch
-`data/sentiment.db`, so running the suite never disturbs your working
-dataset.
+The API tests use FastAPI's `TestClient` against the scratch Postgres test
+database above, reset and seeded with known rows per test (see
+`tests/conftest.py`) -- they don't touch your working `cg_foods_sentiment`
+dataset, so running the suite never disturbs it.
 
 ## Known limitations (see `METHODOLOGY.md` section 5 for the full list)
 
@@ -413,9 +444,26 @@ dataset.
 
 ## Deployment
 
-This repo has no Dockerfile or CI/CD config -- it's set up for local/
-internal use. To run it as a longer-lived service rather than a dev
-server:
+This repo has no CI/CD config -- it's set up for local/internal use, but
+does include a `Dockerfile` + `docker-compose.yml` (`db` + `app`
+services) for running it as a longer-lived service:
+
+```bash
+cp .env.example .env   # fill in optional API keys; DATABASE_URL defaults
+                        # to the bundled `db` service, no edit needed
+docker compose up -d
+```
+
+`docker-entrypoint.sh` waits for Postgres to become reachable, builds the
+bundled sample dataset on first run only (tracked via
+`data/.pipeline_complete`, since the dataset itself now lives in the `db`
+service's own Postgres volume rather than a file under `./data`), then
+starts Uvicorn. Re-run the pipeline stages manually (`docker compose exec
+app python pipeline/clean.py`, etc.) to refresh the dataset later, or
+delete `data/.pipeline_complete` and restart the `app` container to redo
+the first-run build.
+
+Without Docker, run it directly against any Postgres server you manage:
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000   # no --reload in production
@@ -423,15 +471,22 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000   # no --reload in production
 
 Put a reverse proxy (nginx, Caddy, etc.) in front if exposing it beyond
 localhost, and run the pipeline (or `pipeline/collect.py` on a schedule)
-to refresh `data/sentiment.db` before each deploy -- the app only reads
-that file, it never writes to it.
+to refresh the `comments` table before each deploy -- the app only reads
+from Postgres, it never writes to it directly (only the pipeline scripts
+write).
 
 ## Troubleshooting
 
 - **`command not found: python` / `uvicorn`** -- the virtual environment
   isn't active; re-run `source .venv/bin/activate` (step 1).
+- **`psycopg2.OperationalError: could not connect to server`** -- Postgres
+  isn't running or `DATABASE_URL` points somewhere unreachable. If you're
+  using the bundled service, `docker compose up -d db` (and give it a few
+  seconds -- check `docker compose ps` shows it `healthy`); otherwise
+  double-check `DATABASE_URL` in `.env` against wherever your Postgres
+  actually is.
 - **Dashboard loads but every chart is empty** -- the pipeline hasn't been
-  run yet, or `data/sentiment.db` has no `comments` table. Run step 2's
+  run yet, or the database has no `comments` table. Run step 3's
   five commands in order.
 - **`pipeline/classify.py` hangs or times out on the transformer pass** --
   expected on a restricted network; it falls back to VADER-only labels
@@ -440,6 +495,10 @@ that file, it never writes to it.
 - **Port 8000 already in use** -- another `uvicorn` process is still
   running; find and stop it (`lsof -ti:8000 | xargs kill` on macOS/Linux)
   or start this one on a different port (`--port 8001`).
+- **Port 5432 already in use** -- another Postgres instance (local install
+  or another container) is already bound to it; stop that one, or change
+  the host port in `docker-compose.yml`'s `db.ports` and update
+  `DATABASE_URL` to match.
 - **`ModuleNotFoundError` for a pipeline script** -- make sure you're
   running commands from the project root (not from inside `pipeline/`),
   and that the virtual environment is active.

@@ -10,9 +10,10 @@ __pycache__/
 .env
 
 # Regenerable pipeline output -- the entrypoint builds these fresh into a
-# mounted ./data volume on first run. Keeping them out of the build
+# mounted ./data volume on first run (the dataset itself lives in the
+# `db` service's Postgres volume, not here). Keeping them out of the build
 # context matches .gitignore and keeps images from going stale.
-data/*.db
+data/.pipeline_complete
 data/raw_comments.csv
 data/classification_report.json
 data/event_analysis.json

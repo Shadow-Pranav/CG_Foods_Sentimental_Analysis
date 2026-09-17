@@ -92,7 +92,7 @@ def main():
         conn = get_connection()
         rows = conn.execute(
             "SELECT id, vader_label, transformer_label, final_label, label_source "
-            "FROM comments WHERE id IN ({})".format(",".join("?" for _ in gold_by_id)),
+            "FROM comments WHERE id IN ({})".format(",".join("%s" for _ in gold_by_id)),
             list(gold_by_id.keys()),
         ).fetchall()
         conn.close()

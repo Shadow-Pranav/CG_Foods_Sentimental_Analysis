@@ -254,14 +254,14 @@ def main():
     conn.executemany(
         """
         UPDATE comments SET
-            vader_compound = :vader_compound,
-            vader_label = :vader_label,
-            transformer_label = :transformer_label,
-            transformer_score = :transformer_score,
-            transformer_sampled = :transformer_sampled,
-            final_label = :final_label,
-            label_source = :label_source
-        WHERE id = :id
+            vader_compound = %(vader_compound)s,
+            vader_label = %(vader_label)s,
+            transformer_label = %(transformer_label)s,
+            transformer_score = %(transformer_score)s,
+            transformer_sampled = %(transformer_sampled)s,
+            final_label = %(final_label)s,
+            label_source = %(label_source)s
+        WHERE id = %(id)s
         """,
         rows,
     )

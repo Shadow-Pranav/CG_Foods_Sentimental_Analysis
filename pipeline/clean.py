@@ -11,8 +11,8 @@ Implements METHODOLOGY.md section 1 ("Cleaning Pipeline"):
   5. Retain both text_raw and text_clean — text_raw is never overwritten.
 
 Reads data/raw_comments.csv (written by pipeline/generate_sample_data.py or
-pipeline/collect.py) and writes every row into the `comments` SQLite table,
-including excluded rows (exclusion_reason set) so nothing is silently
+pipeline/collect.py) and writes every row into the `comments` PostgreSQL
+table, including excluded rows (exclusion_reason set) so nothing is silently
 dropped — downstream stages and the API simply filter on
 `exclusion_reason IS NULL`. This keeps the pipeline auditable per
 DATA_SOURCES.md's retention notes.
@@ -171,9 +171,9 @@ def write_to_db(cleaned_rows: list) -> None:
             engagement, author_id, language_guess, region, emoji_count,
             exclusion_reason, gold_sentiment
         ) VALUES (
-            :id, :platform, :text_raw, :text_clean, :timestamp, :source_ref,
-            :engagement, :author_id, :language_guess, :region, :emoji_count,
-            :exclusion_reason, :gold_sentiment
+            %(id)s, %(platform)s, %(text_raw)s, %(text_clean)s, %(timestamp)s, %(source_ref)s,
+            %(engagement)s, %(author_id)s, %(language_guess)s, %(region)s, %(emoji_count)s,
+            %(exclusion_reason)s, %(gold_sentiment)s
         )
         """,
         [

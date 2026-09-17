@@ -163,7 +163,7 @@ def main():
         for theme in themes:
             theme_sentiment_counts[(theme, label)] += 1
 
-    conn.executemany("UPDATE comments SET themes = :themes WHERE id = :id", theme_updates)
+    conn.executemany("UPDATE comments SET themes = %(themes)s WHERE id = %(id)s", theme_updates)
 
     conn.execute("DELETE FROM term_frequency;")
     term_rows = []
@@ -171,7 +171,7 @@ def main():
         for term, count in counter.most_common(TOP_N_TERMS):
             term_rows.append({"sentiment": sentiment, "term": term, "count": count})
     conn.executemany(
-        "INSERT INTO term_frequency (sentiment, term, count) VALUES (:sentiment, :term, :count)",
+        "INSERT INTO term_frequency (sentiment, term, count) VALUES (%(sentiment)s, %(term)s, %(count)s)",
         term_rows,
     )
 

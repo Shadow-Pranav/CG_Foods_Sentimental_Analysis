@@ -2,14 +2,13 @@
 FastAPI app for the Wai Wai / CG Foods Sentiment Tracker.
 
 Serves the dashboard (Jinja2 template + static assets) and a small JSON API
-over the SQLite database built by the pipeline (generate_sample_data.py /
+over the PostgreSQL database built by the pipeline (generate_sample_data.py /
 collect.py -> clean.py -> classify.py -> analyze.py).
 
 Run with: uvicorn app.main:app --reload
 """
 
 import json
-import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -24,8 +23,8 @@ try:
 except ImportError:
     pass
 
+import pipeline.db as db
 from pipeline.analyze import COMPETITOR_DISPLAY_NAMES, COMPETITOR_TAGS
-from pipeline.db import DB_PATH
 from pipeline.event_analysis import SIGNIFICANCE_ALPHA, WINDOW_DAYS, analyze_event
 from pipeline.events import KNOWN_EVENTS, WINDOW_START, WINDOW_END
 from pipeline.report import gather_report_data, generate_report_pdf
@@ -57,17 +56,15 @@ def pct_split(counts: dict, total: float = None) -> dict:
 # DB helpers
 # ---------------------------------------------------------------------------
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def get_db() -> db.Connection:
+    return db.get_connection()
 
 
-def table_exists(conn: sqlite3.Connection, name: str) -> bool:
+def table_exists(conn: db.Connection, name: str) -> bool:
     row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        "SELECT to_regclass(%s) as name", (name,)
     ).fetchone()
-    return row is not None
+    return row["name"] is not None
 
 
 class Filters:
@@ -97,7 +94,7 @@ class Filters:
 
         if self._platform_present:
             if self.platforms:
-                placeholders = ",".join("?" for _ in self.platforms)
+                placeholders = ",".join("%s" for _ in self.platforms)
                 clauses.append(f"platform IN ({placeholders})")
                 params.extend(self.platforms)
             else:
@@ -105,7 +102,7 @@ class Filters:
 
         if self._sentiment_present:
             if self.sentiments:
-                placeholders = ",".join("?" for _ in self.sentiments)
+                placeholders = ",".join("%s" for _ in self.sentiments)
                 clauses.append(f"final_label IN ({placeholders})")
                 params.extend(self.sentiments)
             else:
@@ -113,23 +110,23 @@ class Filters:
 
         if self._region_present:
             if self.regions:
-                placeholders = ",".join("?" for _ in self.regions)
+                placeholders = ",".join("%s" for _ in self.regions)
                 clauses.append(f"region IN ({placeholders})")
                 params.extend(self.regions)
             else:
                 clauses.append("1=0")
 
         if self.start_date:
-            clauses.append("timestamp >= ?")
+            clauses.append("timestamp >= %s")
             params.append(self.start_date)
 
         if self.end_date:
-            clauses.append("timestamp <= ?")
+            clauses.append("timestamp <= %s")
             params.append(f"{self.end_date}T23:59:59")
 
         if self.q:
             escaped = self.q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            clauses.append("(LOWER(text_clean) LIKE ? ESCAPE '\\' OR LOWER(text_raw) LIKE ? ESCAPE '\\')")
+            clauses.append("(LOWER(text_clean) LIKE %s ESCAPE '\\' OR LOWER(text_raw) LIKE %s ESCAPE '\\')")
             like_term = f"%{escaped.lower()}%"
             params.extend([like_term, like_term])
 
@@ -149,7 +146,7 @@ def compute_engagement_weighted(conn, where_sql: str, params: list) -> dict:
     trusting the weighted split."""
     counts = empty_counts()
     rows = conn.execute(
-        f"SELECT final_label, SUM(LN(1 + MAX(engagement, 0))) as weight "
+        f"SELECT final_label, SUM(LN(1 + GREATEST(engagement, 0)::double precision)) as weight "
         f"FROM comments WHERE {where_sql} GROUP BY final_label",
         params,
     ).fetchall()
@@ -160,7 +157,7 @@ def compute_engagement_weighted(conn, where_sql: str, params: list) -> dict:
     percentages = pct_split(counts, total_weight)
 
     max_row = conn.execute(
-        f"SELECT MAX(LN(1 + MAX(engagement, 0))) as max_weight FROM comments WHERE {where_sql}",
+        f"SELECT MAX(LN(1 + GREATEST(engagement, 0)::double precision)) as max_weight FROM comments WHERE {where_sql}",
         params,
     ).fetchone()
     max_weight = (max_row["max_weight"] or 0.0) if max_row else 0.0
@@ -331,7 +328,7 @@ def api_timeline(platform: str = Query(None), sentiment: str = Query(None), regi
         where_sql, params = filters.where_clause()
         rows = conn.execute(
             f"""
-            SELECT strftime('%Y-%m', timestamp) as period, final_label, COUNT(*) as cnt
+            SELECT LEFT(timestamp, 7) as period, final_label, COUNT(*) as cnt
             FROM comments WHERE {where_sql}
             GROUP BY period, final_label
             """,
@@ -345,8 +342,8 @@ def api_timeline(platform: str = Query(None), sentiment: str = Query(None), regi
         # docstring for why not a naive linear sum) alongside the plain counts.
         weight_rows = conn.execute(
             f"""
-            SELECT strftime('%Y-%m', timestamp) as period, final_label,
-                   SUM(LN(1 + MAX(engagement, 0))) as weight
+            SELECT LEFT(timestamp, 7) as period, final_label,
+                   SUM(LN(1 + GREATEST(engagement, 0)::double precision)) as weight
             FROM comments WHERE {where_sql}
             GROUP BY period, final_label
             """,
@@ -532,8 +529,8 @@ def api_region_comparison():
             rows = conn.execute(
                 """
                 SELECT final_label, COUNT(*) as cnt FROM comments
-                WHERE exclusion_reason IS NULL AND region = ?
-                  AND timestamp >= ? AND timestamp <= ?
+                WHERE exclusion_reason IS NULL AND region = %s
+                  AND timestamp >= %s AND timestamp <= %s
                 GROUP BY final_label
                 """,
                 (reg, window_start, f"{window_end}T23:59:59"),
@@ -620,7 +617,7 @@ def api_competitors(platform: str = Query(None), sentiment: str = Query(None), r
         where_sql, params = filters.where_clause()
         rows = conn.execute(
             f"""
-            SELECT strftime('%Y-%m', timestamp) as period, final_label, themes
+            SELECT LEFT(timestamp, 7) as period, final_label, themes
             FROM comments WHERE {where_sql} AND themes IS NOT NULL
             """,
             params,
@@ -709,7 +706,7 @@ def api_comments(platform: str = Query(None), sentiment: str = Query(None), regi
         FROM comments
         WHERE {where_sql}
         ORDER BY timestamp DESC
-        LIMIT ? OFFSET ?
+        LIMIT %s OFFSET %s
         """,
         params + [page_size, offset],
     ).fetchall()

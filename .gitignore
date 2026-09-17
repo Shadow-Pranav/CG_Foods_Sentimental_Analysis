@@ -2,7 +2,7 @@
 __pycache__/
 *.pyc
 .env
-data/*.db
+data/.pipeline_complete
 data/raw_comments.csv
 data/classification_report.json
 data/event_analysis.json

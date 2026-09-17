@@ -100,7 +100,7 @@ def gather_report_data(conn) -> dict:
 
     periods = _month_range(WINDOW_START, WINDOW_END)
     timeline_rows = conn.execute(
-        f"SELECT strftime('%Y-%m', timestamp) as period, final_label, COUNT(*) as c "
+        f"SELECT LEFT(timestamp, 7) as period, final_label, COUNT(*) as c "
         f"FROM comments WHERE {kept_where} GROUP BY period, final_label"
     ).fetchall()
     timeline = {p: _empty_counts() for p in periods}
